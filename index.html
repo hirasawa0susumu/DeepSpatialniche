@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DeepSpatial — Reconstructing True 3D Spatial Omics</title>
-<meta name="description" content="A generative framework driven by Optimal Transport Flow Matching to reconstruct continuous 3D tissue topology at single-cell resolution from sparse 2D slices.">
+<title>DeepSpatial</title>
+<link rel="icon" type="image/png" href="assets/logo_s.png">
+<meta name="description" content="A generative framework driven by Optimal Transport Flow Matching to reconstruct continuous 3D spatial omics at single-cell resolution from sparse 2D slices.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -178,6 +179,10 @@ nav {
     background: var(--brand-teal-light); color: var(--brand-teal);
     border-radius: 999px; letter-spacing: 0.05em;
 }
+#langToggleBtn { border: none; font-family: var(--font-sans); }
+.lang-toggle { font-size: 0.9rem !important; padding: 10px 20px !important; }
+.lang-active { font-weight: 700; }
+.lang-inactive { opacity: 0.5; font-weight: 400; }
 
 /* ─────────────────────────────────────────────────────────
    5. HERO SECTION
@@ -263,66 +268,110 @@ nav {
 
 .pipeline {
     background: var(--bg-white); border: 1px solid var(--border-light);
-    border-radius: 24px; padding: 4rem; box-shadow: var(--shadow-md);
+    border-radius: 24px; padding: 2rem 2.5rem; box-shadow: var(--shadow-md);
 }
-.pipeline-flow {
-    display: flex; justify-content: space-between; align-items: center; position: relative;
-    flex-wrap: wrap; gap: 2rem;
-}
-.pipeline-flow::before {
-    content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 2px;
-    background: linear-gradient(to right, rgba(79,139,202,0.2), rgba(90,180,172,0.2));
-    z-index: 0;
-}
-@media (max-width: 768px) { .pipeline-flow::before { display: none; } .pipeline-flow { flex-direction: column; align-items: stretch;} }
 
-.node {
-    position: relative; z-index: 1; background: var(--bg-white);
-    padding: 1.5rem 2rem; border-radius: 16px; border: 1px solid var(--border-light);
-    box-shadow: var(--shadow-sm); text-align: center; flex: 1; min-width: 200px;
+/* 3-column layout: left | connectors | right */
+.structure-layout {
+    display: flex;
+    gap: 0;
+    align-items: stretch;
+}
+@media (max-width: 992px) {
+    .structure-layout { flex-direction: column; gap: 1.5rem; }
+    .structure-mid { display: none !important; }
+}
+
+/* Left columnindependent sizing */
+.structure-left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+}
+.structure-left .structure-card {
+    width: 100%;
+}
+.structure-left .structure-card > img {
+    height: 240px;
+}
+.structure-logo {
+    padding: 1.5rem 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.structure-logo img {
+    height: 100px;
+    width: auto;
+    opacity: 0.8;
+}
+
+/* Middle columnhorizontal lines */
+.structure-mid {
+    width: 40px;
+    flex-shrink: 0;
+    position: relative;
+}
+/* mid-line styles moved to FLOW ANIMATION section */
+
+/* Right column3 equal-height cards */
+.structure-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+.structure-right .structure-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+.structure-right .structure-card > img {
+    height: 150px;
+    flex-shrink: 0;
+}
+.structure-right .structure-card-body {
+    flex: 1;
+}
+/* structure-vline styles moved to FLOW ANIMATION section */
+
+.structure-card {
+    position: relative;
+    background: var(--bg-off-white);
+    border-radius: 14px;
+    border: 1px solid var(--border-light);
+    overflow: hidden;
     transition: var(--transition-smooth);
     cursor: default;
 }
-.node:hover { transform: translateY(-5px); box-shadow: var(--shadow-md); border-color: var(--brand-blue); }
-.node-title { font-weight: 700; font-size: 1rem; color: var(--text-main); margin-bottom: 0.5rem; }
-.node-desc { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
-
-/* Hover image popup */
-.node-preview {
-    position: absolute;
-    bottom: calc(100% + 16px);
-    left: 50%;
-    transform: translateX(-50%) translateY(10px);
-    width: 520px;
-    background: var(--bg-white);
-    border-radius: 16px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.18);
-    border: 1px solid var(--border-light);
-    padding: 8px;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.3s ease, transform 0.3s ease;
-    z-index: 100;
+.structure-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--brand-blue);
+    z-index: 10;
 }
-.node-preview img {
+.structure-card > img {
     width: 100%;
-    height: auto;
-    border-radius: 12px;
+    object-fit: contain;
     display: block;
+    background: #fff;
+    padding: 0.4rem;
+    border-radius: 14px 14px 0 0;
 }
-.node-preview::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    border: 8px solid transparent;
-    border-top-color: var(--bg-white);
+.structure-card-body {
+    padding: 0.7rem 1rem 0.85rem;
 }
-.node:hover .node-preview {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-    pointer-events: auto;
+.structure-card-body h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.25rem;
+    color: var(--text-main);
+}
+.structure-card-body p {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.45;
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -351,7 +400,7 @@ nav {
 .card-num { font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-light); margin-top: 1.5rem; }
 
 /* ─────────────────────────────────────────────────────────
-   9. INTERACTIVE DEMO — responsive iframe
+   9. INTERACTIVE DEMOresponsive iframe
    ───────────────────────────────────────────────────────── */
 .demo-wrapper {
     background: var(--bg-white); border-radius: 24px; padding: 1rem;
@@ -377,12 +426,15 @@ nav {
     border: none;
     display: block;
 }
-/* Fallback removed — JS handles sizing */
+/* Fallback removedJS handles sizing */
 
 .demo-fullscreen-hint {
     display: flex; align-items: center; justify-content: center; gap: 6px;
     margin-top: 0.75rem;
     font-size: 0.8rem; color: var(--text-light); text-align: center;
+}
+@media (max-width: 768px) {
+    .demo-row { flex-direction: column !important; }
 }
 
 /* ─────────────────────────────────────────────────────────
@@ -409,12 +461,13 @@ nav {
     box-shadow: var(--shadow-lg);
     border-color: var(--brand-teal);
 }
-.downstream-card img {
+.downstream-card > img {
     width: 100%;
     height: 260px;
     object-fit: contain;
     display: block;
     background: #ffffff;
+    border-radius: 20px 20px 0 0;
 }
 .downstream-card-body {
     padding: 1.25rem 1.5rem;
@@ -455,7 +508,69 @@ nav {
 .copy-btn:hover { background: rgba(255,255,255,0.2); }
 
 /* ─────────────────────────────────────────────────────────
-   12. FOOTER — full-width, grounded design
+   12. CONTACT
+   ───────────────────────────────────────────────────────── */
+.contact-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2rem;
+    max-width: 960px;
+    margin: 0 auto;
+}
+@media (max-width: 768px) { .contact-grid { grid-template-columns: 1fr; } }
+.contact-card {
+    background: var(--bg-white);
+    border-radius: 20px;
+    padding: 2.5rem 2rem;
+    border: 1px solid rgba(0,0,0,0.04);
+    box-shadow: var(--shadow-sm);
+    text-align: center;
+    transition: var(--transition-smooth);
+}
+.contact-card:hover {
+    transform: translateY(-6px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-light);
+}
+.contact-avatar {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: var(--bg-blue-tint);
+    color: var(--brand-blue);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 1.25rem;
+}
+.contact-card h3 {
+    font-size: 1.15rem;
+    margin-bottom: 0.25rem;
+}
+.contact-role {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--brand-blue);
+    margin-bottom: 0.4rem;
+}
+.contact-affiliation {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 1.25rem;
+    line-height: 1.5;
+}
+.contact-email {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--brand-teal);
+    text-decoration: none;
+    font-weight: 500;
+    word-break: break-all;
+    transition: color 0.2s;
+}
+.contact-email:hover { color: var(--brand-blue); }
+
+/* ─────────────────────────────────────────────────────────
+   13. FOOTERfull-width, grounded design
    ───────────────────────────────────────────────────────── */
 footer {
     background: var(--text-main);
@@ -540,6 +655,59 @@ footer {
     transition: all 1s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .reveal.active { opacity: 1; transform: translateY(0); }
+/* ─────────────────────────────────────────────────────────
+   FLOW ANIMATIONSVG overlay with glowing particles
+   ───────────────────────────────────────────────────────── */
+.pipeline {
+    position: relative;
+}
+.flow-svg-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5;
+    overflow: visible;
+}
+
+/* Glow filter fallback styling */
+.flow-path-line {
+    fill: none;
+    stroke-linecap: round;
+}
+.flow-particle {
+    filter: url(#flowGlow);
+}
+
+/* Right-column vertical connectorsenhanced */
+/* structure-vline styles moved to FLOW ANIMATION section */
+.structure-vline {
+    width: 2px;
+    height: 40px;
+    margin: 0 auto;
+    background: transparent;
+    flex-shrink: 0;
+    position: relative;
+}
+
+/* Card glow pulse when particle arrives */
+@keyframes card-pulse {
+    0%, 100% { box-shadow: var(--shadow-sm); }
+    50% { box-shadow: 0 0 20px rgba(79,139,202,0.25), 0 0 40px rgba(90,180,172,0.1); }
+}
+.structure-card {
+    animation: card-pulse 4s ease-in-out infinite;
+}
+.structure-right .structure-card:nth-child(1) { animation-delay: 0s; }
+.structure-right .structure-card:nth-child(3) { animation-delay: 1.2s; }
+.structure-right .structure-card:nth-child(5) { animation-delay: 2.4s; }
+.structure-left .structure-card:first-child { animation-delay: -1.5s; }
+.structure-left .structure-card:last-child { animation-delay: 3.6s; }
+
+@media (max-width: 992px) {
+    .flow-svg-overlay { display: none; }
+}
 </style>
 </head>
 <body>
@@ -556,29 +724,35 @@ footer {
         <img src="assets/logo.png" alt="DeepSpatial Logo">
     </a>
     <div class="nav-links">
-        <a href="#methodology">Methodology</a>
-        <a href="#demo">Demo</a>
-        <a href="#downstream">Downstream</a>
-        <a href="https://yyh030806.github.io/DeepSpatial/docs/" target="_blank">Docs</a>
-        <a href="#developers">Developers</a>
+        <a href="#overview" data-en="Overview" data-zh="概览">Overview</a>
+        <a href="#method" data-en="Method" data-zh="方法">Method</a>
+        <a href="#demo" data-en="Demo" data-zh="演示">Demo</a>
+        <a href="#downstream" data-en="Downstream" data-zh="下游分析">Downstream</a>
+        <a href="#developers" data-en="Developers" data-zh="开发者">Developers</a>
+        <a href="https://www.biorxiv.org/content/10.64898/2026.04.28.721395v1" target="_blank"><span data-en="Paper" data-zh="论文">Paper</span> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+        <a href="https://yyh030806.github.io/DeepSpatial/docs/" target="_blank"><span data-en="Docs" data-zh="文档">Docs</span> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+        <a href="https://github.com/yyh030806/DeepSpatial" target="_blank"><span data-en="GitHub" data-zh="GitHub">GitHub</span> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
     </div>
     <div class="nav-right">
-        <a href="#start" class="btn btn-primary">Quick Start</a>
+        <button class="btn btn-primary lang-toggle" onclick="toggleLang()" id="langToggleBtn"><span class="lang-inactive">中</span> / <span class="lang-active">EN</span></button>
     </div>
 </nav>
 
 <!-- Hero Section -->
-<section class="hero container">
+<section id="overview" class="hero container">
     <div class="hero-grid">
         <div class="hero-content reveal">
-            <span class="eyebrow">From 2.5D Stacking to Continuous 3D</span>
-            <h1>Reconstructing <span class="gradient-text">True 3D</span><br>Tissue Topology</h1>
-            <p class="lead">Capturing the 3D organization of cells is essential for deciphering complex biological processes, yet severely hindered by the destructive nature of physical sectioning. DeepSpatial is a generative framework driven by Optimal Transport Flow Matching that learns a continuous dynamic vector field — enabling the direct extraction of uninterrupted, infinitely resolvable tissue states at any arbitrary spatial depth.</p>
+            <span class="eyebrow" data-en="From 2.5D Stacking to Continuous 3D" data-zh="从2.5D堆叠到连续3D">From 2.5D Stacking to Continuous 3D</span>
+            <h1 data-en-html='Reconstructing <span class="gradient-text">True 3D</span><br>Spatial Omics' data-zh-html='重建<span class="gradient-text">真实3D</span><br>空间组学'>Reconstructing <span class="gradient-text">True 3D</span><br>Spatial Omics</h1>
+            <p class="lead" data-en="Capturing the 3D organization of cells is essential for deciphering complex biological processes, yet severely hindered by the destructive nature of physical sectioning. DeepSpatial is a generative framework driven by Optimal Transport Flow Matching that learns a continuous dynamic vector fieldenabling the direct extraction of uninterrupted, infinitely resolvable tissue states at any arbitrary spatial depth." data-zh="理解细胞的三维空间排布是揭示复杂生物学过程的关键，但物理切片的破坏性严重制约了这一目标。DeepSpatial 是最优传输流匹配驱动的生成式框架，通过学习连续动态向量场，在任意空间深度直接生成完整且连续可解析的组织状态。">Capturing the 3D organization of cells is essential for deciphering complex biological processes, yet severely hindered by the destructive nature of physical sectioning. DeepSpatial is a generative framework driven by Optimal Transport Flow Matching that learns a continuous dynamic vector fieldenabling the direct extraction of uninterrupted, infinitely resolvable tissue states at any arbitrary spatial depth.</p>
             <div class="hero-actions">
-                <a href="#start" class="btn btn-primary">Get Started</a>
+                <a href="https://www.biorxiv.org/content/10.64898/2026.04.28.721395v1" target="_blank" class="btn btn-primary">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    <span data-en="Paper" data-zh="论文">Paper</span>
+                </a>
                 <a href="https://yyh030806.github.io/DeepSpatial/docs/" target="_blank" class="btn btn-teal">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                    Documentation
+                    <span data-en="Docs" data-zh="文档">Docs</span>
                 </a>
                 <a href="https://github.com/yyh030806/DeepSpatial" target="_blank" class="btn btn-secondary">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.745 0 .268.18.58.688.482A10.019 10.019 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -605,12 +779,10 @@ footer {
                 <br>
                 <div>adata_3d = model.<span class="blue">reconstruct_full_volume</span>(</div>
                 <div>&nbsp;&nbsp;&nbsp;&nbsp;adatas, thickness=<span class="teal">10</span>)</div>
-                <br>
-                <div><span class="dark">✓ Continuous 3D Volume Generated</span></div>
             </div>
             
-            <div class="floating-tag tag-1"><div class="dot-indicator"></div> Infinite Z-resolution</div>
-            <div class="floating-tag tag-2"><div class="dot-indicator"></div> AnnData Compatible</div>
+            <div class="floating-tag tag-1"><div class="dot-indicator"></div> <span data-en="Continuous Z-Reconstruction" data-zh="连续Z维重建">Continuous Z-Reconstruction</span></div>
+            <div class="floating-tag tag-2"><div class="dot-indicator"></div> <span data-en="AnnData Compatible" data-zh="AnnData 兼容">AnnData Compatible</span></div>
         </div>
     </div>
 </section>
@@ -632,7 +804,6 @@ footer {
         <div class="ticker-item">•</div>
         <div class="ticker-item"><span class="highlight">129 Slices</span> Allen Brain CCFv3 atlas</div>
         <div class="ticker-item">•</div>
-        <!-- Replicated for seamless loop -->
         <div class="ticker-item"><span class="highlight">Unbalanced OT</span> Cell-to-cell coupling</div>
         <div class="ticker-item">•</div>
         <div class="ticker-item"><span class="highlight">Flow Matching</span> Probability flow ODE</div>
@@ -649,51 +820,78 @@ footer {
     </div>
 </section>
 
-<!-- Methodology Section -->
-<section id="methodology" class="section container">
+<!-- Structure Section -->
+<section id="method" class="section container">
     <div class="section-header reveal">
-        <span class="eyebrow">The Pipeline</span>
-        <h2>From Discrete Slices to Continuous Volume</h2>
-        <p class="lead">DeepSpatial reframes 3D reconstruction as a continuous probability density evolution. Rather than merely inserting pseudo-2D planes, it models the multi-modal transitions between physical slices as mixed continuous-discrete dynamics via a scalable Transformer architecture.</p>
+        <span class="eyebrow" data-en="The Pipeline" data-zh="技术流程">The Pipeline</span>
+        <h2 data-en="From Discrete Slices to Continuous Volume" data-zh="从离散切片到连续体积">From Discrete Slices to Continuous Volume</h2>
+        <p class="lead" data-en="DeepSpatial reframes 3D reconstruction as a continuous probability density evolution. Rather than merely inserting 2.5D planes, it models the multi-modal transitions between physical slices as mixed continuous-discrete dynamics via a scalable Transformer architecture." data-zh="DeepSpatial 将三维重建重新表述为连续的概率密度演化：不再简单插入伪二维平面，而是借助可扩展的 Transformer 架构，对相邻切片间的多模态过渡进行连续-离散混合动力学建模。">DeepSpatial reframes 3D reconstruction as a continuous probability density evolution. Rather than merely inserting 2.5D planes, it models the multi-modal transitions between physical slices as mixed continuous-discrete dynamics via a scalable Transformer architecture.</p>
     </div>
     
     <div class="pipeline reveal" style="transition-delay: 0.1s;">
-        <div class="pipeline-flow">
-            <div class="node">
-                <div class="node-title">1. Input 2D Slices</div>
-                <div class="node-desc">Multi-layer spatial omics: coordinates, gene/protein expression, cell labels, slide thickness &amp; interval</div>
-            </div>
-            <div class="node">
-                <div class="node-preview">
-                    <img src="assets/method_uot.png" alt="UOT Coupling method">
+        <div class="structure-layout" id="structureLayout">
+            <!-- Left column -->
+            <div class="structure-left">
+                <div class="structure-card">
+                    <img src="assets/method_input.png" alt="Input Slides">
+                    <div class="structure-card-body">
+                        <h3 data-en="Input Slides" data-zh="输入切片">Input Slides</h3>
+                        <p data-en="Multi-layer 2D spatial omics sections with spatial coordinates, omics expressions (genes &amp; proteins), optional cell-type labels, and physical slice metadata including thickness and interval distances." data-zh="多层二维空间组学切片，包含空间坐标、组学表达（基因与蛋白）、可选的细胞类型标签，以及切片厚度与层间距等物理参数。">Multi-layer 2D spatial omics sections with spatial coordinates, omics expressions (genes &amp; proteins), optional cell-type labels, and physical slice metadata including thickness and interval distances.</p>
+                    </div>
                 </div>
-                <div class="node-title" style="color: var(--brand-blue);">2. UOT Coupling</div>
-                <div class="node-desc">Unbalanced Optimal Transport constructs a cost matrix balancing spatial proximity, transcriptomic similarity, and cell-type penalty to establish biologically rigorous cell-to-cell correspondences</div>
-            </div>
-            <div class="node">
-                <div class="node-preview">
-                    <img src="assets/method_fm.png" alt="Flow Matching method">
+                <div class="structure-logo">
+                    <img src="assets/logo.png" alt="DeepSpatial">
                 </div>
-                <div class="node-title" style="color: var(--brand-teal);">3. Flow Matching (GiT)</div>
-                <div class="node-desc">Gene Diffusion Transformer with adaLN-Zero conditioning learns a shared continuous vector field over spatial, transcriptomic, and categorical modalities</div>
-            </div>
-            <div class="node">
-                <div class="node-preview">
-                    <img src="assets/method_3d.png" alt="3D Virtual Tissue generation">
+                <div class="structure-card">
+                    <img src="assets/method_output.png" alt="Output Virtual Tissue">
+                    <div class="structure-card-body">
+                        <h3 data-en="Output Virtual Tissue" data-zh="输出虚拟组织">Output Virtual Tissue</h3>
+                        <p data-en="A fully continuous 3D spatial atlas with precise 3D coordinates, cell-type identities, and high-dimensional omics expressions assigned to each generated virtual cell." data-zh="连续的三维空间图谱——每个虚拟细胞都包含精确的三维坐标、细胞类型标注与高维组学表达。">A fully continuous 3D spatial atlas with precise 3D coordinates, cell-type identities, and high-dimensional omics expressions assigned to each generated virtual cell.</p>
+                    </div>
                 </div>
-                <div class="node-title">4. 3D Virtual Tissue</div>
-                <div class="node-desc">ODE integration with density-preserving bidirectional sampling synthesizes uninterrupted tissue at any arbitrary physical depth</div>
+            </div>
+
+            <!-- Middle spacing (flow drawn by SVG overlay) -->
+            <div class="structure-mid"></div>
+
+            <!-- Right column -->
+            <div class="structure-right">
+                <div class="structure-card">
+                    <img src="assets/method_uot.png" alt="UOT Coupling">
+                    <div class="structure-card-body">
+                        <h3 data-en="i. UOT Coupling" data-zh="i. 非平衡最优传输耦合">i. UOT Coupling</h3>
+                        <p data-en="Unbalanced Optimal Transport constructs a cost matrix integrating spatial proximity, transcriptomic similarity, and cell-type penalty to establish biologically rigorous cell-to-cell correspondences across adjacent slices." data-zh="非平衡最优传输综合空间距离、转录组相似性与细胞类型惩罚构建代价矩阵，在相邻切片间建立具有生物学意义的细胞对应关系。">Unbalanced Optimal Transport constructs a cost matrix integrating spatial proximity, transcriptomic similarity, and cell-type penalty to establish biologically rigorous cell-to-cell correspondences across adjacent slices.</p>
+                    </div>
+                </div>
+                <div class="structure-vline"></div>
+                <div class="structure-card">
+                    <img src="assets/method_fm.png" alt="Flow Matching">
+                    <div class="structure-card-body">
+                        <h3 data-en="ii. Flow Matching (GiT)" data-zh="ii. 流匹配 (GiT)">ii. Flow Matching (GiT)</h3>
+                        <p data-en="A scalable multi-modal Transformer trained via flow matching learns a shared continuous vector field over spatial coordinates, transcriptomic expressions, and categorical cell-type identities." data-zh="可扩展的多模态 Transformer 通过流匹配训练，在空间坐标、转录组表达与细胞类型等多种模态上学习共享的连续向量场。">A scalable multi-modal Transformer trained via flow matching learns a shared continuous vector field over spatial coordinates, transcriptomic expressions, and categorical cell-type identities.</p>
+                    </div>
+                </div>
+                <div class="structure-vline"></div>
+                <div class="structure-card">
+                    <img src="assets/method_3d.png" alt="3D Volume Generation">
+                    <div class="structure-card-body">
+                        <h3 data-en="iii. 3D Volume Generation" data-zh="iii. 三维体积生成">iii. 3D Volume Generation</h3>
+                        <p data-en="Solving Probability Flow ODEs with density-preserving bidirectional sampling to synthesize tissue at any arbitrary depth, guided by interpolated macroscopic cell density fields for biologically faithful volume reconstruction." data-zh="求解概率流 ODE，结合密度保持的双向采样策略，在宏观细胞密度场引导下在任意深度生成组织，实现生物学真实的三维重建。">Solving Probability Flow ODEs with density-preserving bidirectional sampling to synthesize tissue at any arbitrary depth, guided by interpolated macroscopic cell density fields for biologically faithful volume reconstruction.</p>
+                    </div>
+                </div>
             </div>
         </div>
+        <!-- SVG Flow Overlaydrawn by JS -->
+        <svg class="flow-svg-overlay" id="flowSvg"></svg>
     </div>
 </section>
 
 <!-- Demo Section -->
 <section id="demo" class="section container">
     <div class="section-header reveal">
-        <span class="eyebrow">Interactive Explorer</span>
-        <h2>3D Cell Atlas</h2>
-        <p class="lead">Explore the reconstructed MERFISH mouse hypothalamus volume. Rotate, zoom and filter across annotated cell types — each point represents a single cell in its true 3D spatial context.</p>
+        <span class="eyebrow" data-en="Interactive Explorer" data-zh="交互式探索">Interactive Explorer</span>
+        <h2 data-en="3D Cell Atlas" data-zh="3D细胞图谱">3D Cell Atlas</h2>
+        <p class="lead" data-en="Explore the reconstructed spatial omics volumes. Rotate, zoom and filter across annotated cell types. Each point represents a single cell in its true 3D spatial context." data-zh="探索重建的空间组学体积。可自由旋转、缩放，并按细胞类型筛选。每个点都对应真实三维空间中的一个细胞。">Explore the reconstructed spatial omics volumes. Rotate, zoom and filter across annotated cell types. Each point represents a single cell in its true 3D spatial context.</p>
     </div>
     
     <div class="demo-wrapper reveal" style="transition-delay: 0.1s;">
@@ -708,90 +906,112 @@ footer {
         </div>
     </div>
 
+    <!-- Two side-by-side smaller demos -->
+    <div class="demo-row reveal" style="transition-delay: 0.2s; display: flex; gap: 1.5rem; margin-top: 2rem;">
+        <div class="demo-wrapper" style="flex: 1; min-width: 0;">
+            <div class="demo-header">
+                <div class="demo-header-title">merfish_3d_pointcloud.html</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); display:flex; align-items:center; gap:6px;">
+                    <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand-teal);"></span> WebGL
+                </div>
+            </div>
+            <div class="demo-iframe-container">
+                <iframe src="assets/merfish_3d_pointcloud.html" title="MERFISH 3D Point Cloud" loading="lazy" allowfullscreen style="height:500px;"></iframe>
+            </div>
+        </div>
+        <div class="demo-wrapper" style="flex: 1; min-width: 0;">
+            <div class="demo-header">
+                <div class="demo-header-title">her2_breast_3d_pointcloud.html</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); display:flex; align-items:center; gap:6px;">
+                    <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--brand-teal);"></span> WebGL
+                </div>
+            </div>
+            <div class="demo-iframe-container">
+                <iframe src="assets/her2_breast_3d_pointcloud.html" title="HER2 Breast 3D Point Cloud" loading="lazy" allowfullscreen style="height:500px;"></iframe>
+            </div>
+        </div>
+    </div>
+
 </section>
 
 <!-- Downstream Analysis Section -->
 <section id="downstream" class="section bg-gray">
     <div class="container">
         <div class="section-header reveal">
-            <span class="eyebrow">Applications</span>
-            <h2>Downstream Analysis</h2>
-            <p class="lead">By providing an infinitely resolvable 3D virtual tissue, DeepSpatial catalyzes the shift from traditional planar analyses to true volumetric quantification — enabling 3D cell-cell communication mapping, spatial domain identification, and whole-organ atlas construction.</p>
+            <span class="eyebrow" data-en="Applications" data-zh="应用">Applications</span>
+            <h2 data-en="Downstream Analysis" data-zh="下游分析">Downstream Analysis</h2>
+            <p class="lead" data-en="By providing an infinitely resolvable 3D virtual tissue, DeepSpatial catalyzes the shift from traditional planar analyses to true volumetric quantificationenabling 3D cell-cell communication mapping, spatial domain identification, and whole-organ atlas construction." data-zh="DeepSpatial 生成连续可解析的三维虚拟组织，将分析从传统的二维平面拓展到真正的三维空间——支持三维细胞通讯网络映射、空间功能域识别与全器官图谱构建。">By providing an infinitely resolvable 3D virtual tissue, DeepSpatial catalyzes the shift from traditional planar analyses to true volumetric quantificationenabling 3D cell-cell communication mapping, spatial domain identification, and whole-organ atlas construction.</p>
         </div>
 
         <div class="downstream-grid">
             <div class="downstream-card reveal" style="transition-delay: 0.0s;">
                 <img src="assets/downstream_1.png" alt="Virtual Slide">
                 <div class="downstream-card-body">
-                    <h3>i. Virtual Slide</h3>
-                    <p>Generate virtual tissue slides at arbitrary Z-depths, revealing continuous 3D microenvironments destroyed by physical sectioning.</p>
+                    <h3 data-en="i. Virtual Slide" data-zh="i. 虚拟切片">i. Virtual Slide</h3>
+                    <p data-en="Generate virtual tissue sections at selected Z-depths to examine spatial features between measured physical sections." data-zh="在选定的 Z 轴深度生成虚拟组织切片，用于观察物理切片之间的空间特征。">Generate virtual tissue slides at arbitrary Z-depths, revealing continuous 3D microenvironments destroyed by physical sectioning.</p>
                 </div>
             </div>
             <div class="downstream-card reveal" style="transition-delay: 0.1s;">
                 <img src="assets/downstream_2.png" alt="3D Spatial Domain">
                 <div class="downstream-card-body">
-                    <h3>ii. 3D Spatial Domain</h3>
-                    <p>Apply CellCharter or similar methods to delineate continuous 3D spatial domains and architectures across the reconstructed volume.</p>
+                    <h3 data-en="ii. 3D Spatial Domain" data-zh="ii. 3D空间域">ii. 3D Spatial Domain</h3>
+                    <p data-en="Identify spatial domains and tissue architectures within the reconstructed 3D volume." data-zh="在重建的三维体积中识别空间域与组织结构。">Apply CellCharter or similar methods to delineate continuous 3D spatial domains and architectures across the reconstructed volume.</p>
                 </div>
             </div>
             <div class="downstream-card reveal" style="transition-delay: 0.2s;">
                 <img src="assets/downstream_3.png" alt="Whole-Brain 3D Atlas">
                 <div class="downstream-card-body">
-                    <h3>iii. Whole-Brain 3D Atlas</h3>
-                    <p>Scalable reconstruction of a 39.2M-cell mouse whole-brain spatial atlas from 129 CCF-aligned sections.</p>
+                    <h3 data-en="iii. Whole-Brain 3D Atlas" data-zh="iii. 全脑3D图谱">iii. Whole-Brain 3D Atlas</h3>
+                    <p data-en="Reconstruct a mouse whole-brain 3D spatial atlas containing 39.2 million cells from 129 CCF-aligned sections." data-zh="基于 129 个 CCF 对齐切片，重建包含 3920 万细胞的小鼠全脑三维空间图谱。">Scalable reconstruction of a 39.2M-cell mouse whole-brain spatial atlas from 129 CCF-aligned sections.</p>
                 </div>
             </div>
             <div class="downstream-card reveal" style="transition-delay: 0.3s;">
                 <img src="assets/downstream_4.png" alt="In Silico Sectioning">
                 <div class="downstream-card-body">
-                    <h3>iv. In Silico Sectioning</h3>
-                    <p>Computationally slice the volume along coronal or sagittal planes for cross-platform comparison and topological analysis.</p>
+                    <h3 data-en="iv. In Silico Sectioning" data-zh="iv. 多向截面重切">iv. In Silico Sectioning</h3>
+                    <p data-en="Extract computational sections from the reconstructed volume along different anatomical planes for visualization and structural comparison." data-zh="沿不同解剖平面从重建体积中提取计算切片，用于可视化与结构比较。">Computationally slice the volume along coronal or sagittal planes for cross-platform comparison and topological analysis.</p>
                 </div>
             </div>
         </div>
     </div>
 </section>
 
-<!-- Quick Start & Citation -->
+<!-- Developers & Citation -->
 <section id="developers" class="section">
     <div class="container">
+        <div class="section-header reveal">
+            <span class="eyebrow" data-en="Open Source" data-zh="开源">Open Source</span>
+            <h2 data-en="Built for Researchers" data-zh="为研究者打造">Built for Researchers</h2>
+            <p class="lead" data-en="DeepSpatial is built on AnnData and fully compatible with the Scanpy ecosystem. GPU-accelerated PyTorch implementation enables efficient 3D manifold recovery of large-scale spatial datasets." data-zh="DeepSpatial 基于 AnnData 构建，与 Scanpy 生态完全兼容。GPU 加速的 PyTorch 实现可高效完成大规模空间数据集的三维流形恢复。">DeepSpatial is built on AnnData and fully compatible with the Scanpy ecosystem. GPU-accelerated PyTorch implementation enables efficient 3D manifold recovery of large-scale spatial datasets.</p>
+        </div>
+
         <div class="hero-grid">
             <div class="reveal">
-                <span class="eyebrow">Open Source</span>
-                <h2>Built for Researchers</h2>
-                <p class="lead" style="margin-top: 1rem;">DeepSpatial is built on AnnData and fully compatible with the Scanpy ecosystem. GPU-accelerated PyTorch implementation enables efficient 3D manifold recovery of large-scale spatial datasets.</p>
-                
-                <h3 style="margin-top: 3rem; font-size: 1.25rem;">Quick Start</h3>
-                <div class="code-block" id="start">
-                    <button class="copy-btn" onclick="copyText('installCmd', this)">Copy</button>
-                    <span id="installCmd"><span class="c-teal">$</span> pip install deepspatial</span>
-                </div>
-                <div class="code-block" style="margin-top: 1rem;">
-                    <button class="copy-btn" onclick="copyText('installAlt', this)">Copy</button>
-                    <span id="installAlt"><span class="c-teal">#</span> Or install from source<br><span class="c-teal">$</span> git clone https://github.com/yyh030806/DeepSpatial.git<br><span class="c-teal">$</span> cd DeepSpatial<br><span class="c-teal">$</span> pip install -e .</span>
-                </div>
-
-                <h3 style="margin-top: 2rem; font-size: 1.25rem;">Tutorials &amp; API Reference</h3>
-                <p style="color: var(--text-muted); margin-top: 0.5rem;">Step-by-step guides for MERFISH Mouse Hypothalamus, Human Breast Cancer IMC, and Deep-STARmap validation — plus full API documentation.</p>
+                <h3 style="font-size: 1.25rem;" data-en="Tutorials &amp; API Reference" data-zh="教程与API参考">Tutorials &amp; API Reference</h3>
+                <p style="color: var(--text-muted); margin-top: 0.5rem;" data-en="Step-by-step guides for MERFISH Mouse Hypothalamus, Human Breast Cancer IMC, and Deep-STARmap validationplus full API documentation." data-zh="涵盖 MERFISH 小鼠下丘脑、人类乳腺癌 IMC 及 Deep-STARmap 验证的完整教程，并提供详细 API 文档。">Step-by-step guides for MERFISH Mouse Hypothalamus, Human Breast Cancer IMC, and Deep-STARmap validationplus full API documentation.</p>
                 <a href="https://yyh030806.github.io/DeepSpatial/docs/" target="_blank" class="btn btn-teal" style="margin-top: 1rem;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                    Read the Docs
+                    <span data-en="Read the Docs" data-zh="阅读文档">Read the Docs</span>
                 </a>
             </div>
             
             <div class="reveal" style="transition-delay: 0.2s;">
-                <h3 style="font-size: 1.25rem;">Citation (BibTeX)</h3>
-                <p style="color: var(--text-muted); margin-top: 0.5rem;">If DeepSpatial is useful in your research, please cite our paper.</p>
+                <h3 style="font-size: 1.25rem;" data-en="Citation (BibTeX)" data-zh="引用 (BibTeX)">Citation (BibTeX)</h3>
+                <p style="color: var(--text-muted); margin-top: 0.5rem;" data-en="If DeepSpatial is useful in your research, please cite our paper." data-zh="如果 DeepSpatial 对您的研究有所帮助，欢迎引用我们的工作。">If DeepSpatial is useful in your research, please cite our paper.</p>
                 <div class="code-block">
                     <button class="copy-btn" onclick="copyText('citeText', this)">Copy</button>
                     <span id="citeText"><span class="c-blue">@article</span>{yang2026deepspatial,
-  title   = {Reconstructing True 3D Spatial
-             Omics at Single-Cell
-             Resolution},
   author  = {Yang, Yuhang and Luo, Yiming
-             and Zhang, Kai and others},
-  journal = {Nature Computational Science},
-  year    = {2026}
+             and Zhang, Kai and Bu, Yonggan
+             and Xia, Zheng and Peng, Haoxin
+             and Yan, Rui and Liu, Qi
+             and Chen, Yang and Shen, Lin
+             and Chen, Enhong},
+  title   = {Reconstructing True 3D Spatial
+             Omics at Single-Cell Resolution},
+  year    = {2026},
+  doi     = {10.64898/2026.04.28.721395},
+  journal = {bioRxiv}
 }</span>
                 </div>
             </div>
@@ -799,43 +1019,43 @@ footer {
     </div>
 </section>
 
+
 <!-- Footer -->
 <footer>
     <div class="footer-inner">
         <div class="footer-grid">
             <div class="footer-brand-col">
                 <h2>Deep<span>Spatial</span></h2>
-                <p>A generative framework driven by Optimal Transport Flow Matching for continuous 3D tissue reconstruction at single-cell resolution.</p>
+                <p data-en="A generative framework driven by Optimal Transport Flow Matching for continuous 3D tissue reconstruction at single-cell resolution." data-zh="基于最优传输流匹配的生成式框架，在单细胞分辨率下实现连续三维组织重建。">A generative framework driven by Optimal Transport Flow Matching for continuous 3D tissue reconstruction at single-cell resolution.</p>
             </div>
             <div class="footer-col">
-                <h4>Navigate</h4>
+                <h4 data-en="Navigate" data-zh="导航">Navigate</h4>
                 <ul>
-                    <li><a href="#methodology">Methodology</a></li>
-                    <li><a href="#demo">Demo</a></li>
-                    <li><a href="#downstream">Downstream</a></li>
-                    <li><a href="#developers">Developers</a></li>
+                    <li><a href="#overview" data-en="Overview" data-zh="概览">Overview</a></li>
+                    <li><a href="#method" data-en="Method" data-zh="方法">Method</a></li>
+                    <li><a href="#demo" data-en="Demo" data-zh="演示">Demo</a></li>
+                    <li><a href="#downstream" data-en="Downstream" data-zh="下游分析">Downstream</a></li>
+                    <li><a href="#developers" data-en="Developers" data-zh="开发者">Developers</a></li>
                 </ul>
             </div>
             <div class="footer-col">
-                <h4>Resources</h4>
+                <h4 data-en="Resources" data-zh="资源">Resources</h4>
                 <ul>
-                    <li><a href="https://yyh030806.github.io/DeepSpatial/docs/" target="_blank">Documentation</a></li>
-                    <li><a href="https://yyh030806.github.io/DeepSpatial/docs/tutorials/index.html" target="_blank">Tutorials</a></li>
-                    <li><a href="https://yyh030806.github.io/DeepSpatial/docs/api/index.html" target="_blank">API Reference</a></li>
-                    <li><a href="https://github.com/yyh030806/DeepSpatial" target="_blank">GitHub</a></li>
+                    <li><a href="https://www.biorxiv.org/content/10.64898/2026.04.28.721395v1" target="_blank"><span data-en="Paper" data-zh="论文">Paper</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px; vertical-align: text-top;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></li>
+                    <li><a href="https://yyh030806.github.io/DeepSpatial/docs/" target="_blank"><span data-en="Docs" data-zh="文档">Docs</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px; vertical-align: text-top;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></li>
+                    <li><a href="https://github.com/yyh030806/DeepSpatial" target="_blank"><span data-en="GitHub" data-zh="GitHub">GitHub</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px; vertical-align: text-top;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></li>
                 </ul>
             </div>
             <div class="footer-col">
-                <h4>Affiliations</h4>
+                <h4 data-en="Affiliations" data-zh="合作单位">Affiliations</h4>
                 <ul>
-                    <li><a href="https://www.ustc.edu.cn/" target="_blank">USTC</a></li>
-                    <li><a href="https://www.bjcancer.org/" target="_blank">PKU Cancer Hospital</a></li>
-                    <li><a href="https://cogskl.iflytek.com/" target="_blank">SKL Cognitive Intelligence</a></li>
+                    <li><a href="https://www.ustc.edu.cn/" target="_blank"><span data-en="University of Science and Technology of China" data-zh="中国科学技术大学">University of Science and Technology of China</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px; vertical-align: text-top;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></li>
+                    <li><a href="https://www.bjcancer.org/" target="_blank"><span data-en="Beijing Cancer Hospital" data-zh="北京大学肿瘤医院">Beijing Cancer Hospital</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-left: 4px; vertical-align: text-top;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></li>
                 </ul>
             </div>
         </div>
         <div class="footer-bottom-bar">
-            <span>&copy; 2026 DeepSpatial &middot; Yang, Luo, Zhang et al.</span>
+            <span>&copy; 2026 DeepSpatial &middot; Yang et al.</span>
             <span>Released under the MIT License</span>
         </div>
     </div>
@@ -891,6 +1111,264 @@ footer {
         demoIframe.addEventListener('load', resizeDemoIframe);
         // Also re-check on window resize
         window.addEventListener('resize', resizeDemoIframe);
+    }
+    // ─── Position horizontal connector lines ───
+    // (replaced by SVG flow system below)
+
+    // ─── SVG Flow Animation System ───
+    function buildFlowSVG() {
+        var pipeline = document.querySelector('.pipeline');
+        var svg = document.getElementById('flowSvg');
+        if (!pipeline || !svg) return;
+
+        var pRect = pipeline.getBoundingClientRect();
+
+        // Identify the 5 cards
+        var leftCards = pipeline.querySelectorAll('.structure-left > .structure-card');
+        var rightCards = pipeline.querySelectorAll('.structure-right > .structure-card');
+        if (leftCards.length < 2 || rightCards.length < 3) return;
+
+        var inputCard = leftCards[0];
+        var outputCard = leftCards[leftCards.length - 1];
+        var card1 = rightCards[0];
+        var card2 = rightCards[1];
+        var card3 = rightCards[2];
+
+        function rel(el) {
+            var r = el.getBoundingClientRect();
+            return {
+                left: r.left - pRect.left,
+                top: r.top - pRect.top,
+                right: r.right - pRect.left,
+                bottom: r.bottom - pRect.top,
+                cx: (r.left + r.right) / 2 - pRect.left,
+                cy: (r.top + r.bottom) / 2 - pRect.top,
+                w: r.width,
+                h: r.height
+            };
+        }
+
+        var inp = rel(inputCard);
+        var out = rel(outputCard);
+        var c1 = rel(card1);
+        var c2 = rel(card2);
+        var c3 = rel(card3);
+
+        // Build 4 path segments
+        // Segment 1: Input right-center → Card1 left-center (S-curve)
+        var s1Start = { x: inp.right, y: inp.cy };
+        var s1End = { x: c1.left, y: c1.cy };
+        var s1mx = (s1Start.x + s1End.x) / 2;
+        var seg1 = 'M' + s1Start.x + ',' + s1Start.y +
+                   ' C' + s1mx + ',' + s1Start.y +
+                   ' ' + s1mx + ',' + s1End.y +
+                   ' ' + s1End.x + ',' + s1End.y;
+
+        // Segment 2: Card1 bottom-center → Card2 top-center
+        var s2Start = { x: c1.cx, y: c1.bottom };
+        var s2End = { x: c2.cx, y: c2.top };
+        var seg2 = 'M' + s2Start.x + ',' + s2Start.y +
+                   ' L' + s2End.x + ',' + s2End.y;
+
+        // Segment 3: Card2 bottom-center → Card3 top-center
+        var s3Start = { x: c2.cx, y: c2.bottom };
+        var s3End = { x: c3.cx, y: c3.top };
+        var seg3 = 'M' + s3Start.x + ',' + s3Start.y +
+                   ' L' + s3End.x + ',' + s3End.y;
+
+        // Segment 4: Card3 left-center → Output right-center (S-curve back)
+        var s4Start = { x: c3.left, y: c3.cy };
+        var s4End = { x: out.right, y: out.cy };
+        var s4mx = (s4Start.x + s4End.x) / 2;
+        var seg4 = 'M' + s4Start.x + ',' + s4Start.y +
+                   ' C' + s4mx + ',' + s4Start.y +
+                   ' ' + s4mx + ',' + s4End.y +
+                   ' ' + s4End.x + ',' + s4End.y;
+
+        var TOTAL_DUR = 8; // total cycle in seconds
+        var segments = [
+            { d: seg1, startFrac: 0,    endFrac: 0.25 },
+            { d: seg2, startFrac: 0.25, endFrac: 0.45 },
+            { d: seg3, startFrac: 0.45, endFrac: 0.65 },
+            { d: seg4, startFrac: 0.65, endFrac: 1.0  }
+        ];
+
+        // Build SVG content
+        var html = '';
+
+        // Defs: filters and gradients
+        html += '<defs>';
+        // Glow filter - large
+        html += '<filter id="flowGlow" x="-100%" y="-100%" width="300%" height="300%">';
+        html += '<feGaussianBlur stdDeviation="4" result="blur1"/>';
+        html += '<feGaussianBlur stdDeviation="8" result="blur2"/>';
+        html += '<feMerge><feMergeNode in="blur2"/><feMergeNode in="blur1"/><feMergeNode in="SourceGraphic"/></feMerge>';
+        html += '</filter>';
+        // Glow filter - small
+        html += '<filter id="flowGlowSm" x="-100%" y="-100%" width="300%" height="300%">';
+        html += '<feGaussianBlur stdDeviation="2.5" result="blur"/>';
+        html += '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>';
+        html += '</filter>';
+        // Gradient for path lineshorizontal (seg1, seg4)
+        html += '<linearGradient id="pathGrad1" x1="0%" y1="0%" x2="100%" y2="0%">';
+        html += '<stop offset="0%" stop-color="#4F8BCA" stop-opacity="0.3"/>';
+        html += '<stop offset="50%" stop-color="#5AB4AC" stop-opacity="0.5"/>';
+        html += '<stop offset="100%" stop-color="#4F8BCA" stop-opacity="0.3"/>';
+        html += '</linearGradient>';
+        // Gradient for path linesvertical (seg2, seg3), userSpaceOnUse for robustness
+        html += '<linearGradient id="pathGradV" gradientUnits="userSpaceOnUse" x1="' + c1.cx + '" y1="' + c1.bottom + '" x2="' + c1.cx + '" y2="' + c3.top + '">';
+        html += '<stop offset="0%" stop-color="#5AB4AC" stop-opacity="0.5"/>';
+        html += '<stop offset="50%" stop-color="#4F8BCA" stop-opacity="0.6"/>';
+        html += '<stop offset="100%" stop-color="#5AB4AC" stop-opacity="0.5"/>';
+        html += '</linearGradient>';
+        html += '</defs>';
+
+        // Draw path lines (background)use vertical gradient for seg2/seg3
+        segments.forEach(function(seg, i) {
+            var grad = (i === 1 || i === 2) ? 'url(#pathGradV)' : 'url(#pathGrad1)';
+            // Solid base line
+            html += '<path d="' + seg.d + '" stroke="' + grad + '" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>';
+            // Animated dash overlay on top
+            html += '<path d="' + seg.d + '" stroke="rgba(79,139,202,0.25)" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="6 12" opacity="0.8">';
+            html += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1s" repeatCount="indefinite"/>';
+            html += '</path>';
+        });
+
+        // Particle config: one blue, one teal, well-separated
+        var particleConfigs = [
+            { r: 4, color: '#5AB4AC', filter: 'flowGlow', opacity: 0.95, delay: 0 },
+            { r: 4, color: '#4F8BCA', filter: 'flowGlow', opacity: 0.95, delay: TOTAL_DUR / 2 },
+        ];
+
+        // For each particle config, create circles that animate across all 4 segments in perfect sync
+        particleConfigs.forEach(function(pc) {
+            var baseDelay = pc.delay || 0;
+
+            segments.forEach(function(seg, si) {
+                // Use keyTimes + keyPoints so each circle's motion fills TOTAL_DUR
+                // but only moves during its segment's time fraction
+                var kt0 = seg.startFrac.toFixed(4);
+                var kt1 = seg.endFrac.toFixed(4);
+                // Pad with hold-still portions before & after
+                var keyTimes, keyPoints;
+                if (seg.startFrac === 0 && seg.endFrac === 1) {
+                    keyTimes = '0;1';
+                    keyPoints = '0;1';
+                } else if (seg.startFrac === 0) {
+                    keyTimes = '0;' + kt1 + ';1';
+                    keyPoints = '0;1;1';
+                } else if (seg.endFrac === 1) {
+                    keyTimes = '0;' + kt0 + ';1';
+                    keyPoints = '0;0;1';
+                } else {
+                    keyTimes = '0;' + kt0 + ';' + kt1 + ';1';
+                    keyPoints = '0;0;1;1';
+                }
+
+                // Opacity: visible only during active segment window
+                var opVals = '0;0;' + pc.opacity + ';' + pc.opacity + ';0;0';
+                var opKT;
+                var e = 0.001;
+                var sf = Math.max(seg.startFrac - e, 0).toFixed(4);
+                var sf2 = seg.startFrac.toFixed(4);
+                var ef = seg.endFrac.toFixed(4);
+                var ef2 = Math.min(seg.endFrac + e, 1).toFixed(4);
+                if (seg.startFrac === 0) {
+                    opVals = pc.opacity + ';' + pc.opacity + ';0;0';
+                    opKT = '0;' + ef + ';' + ef2 + ';1';
+                } else if (seg.endFrac >= 1) {
+                    opVals = '0;0;' + pc.opacity + ';' + pc.opacity;
+                    opKT = '0;' + sf + ';' + sf2 + ';1';
+                } else {
+                    opKT = '0;' + sf + ';' + sf2 + ';' + ef + ';' + ef2 + ';1';
+                }
+
+                html += '<circle r="' + pc.r + '" fill="' + pc.color + '" filter="url(#' + pc.filter + ')" opacity="0">';
+                html += '<animate attributeName="opacity" values="' + opVals + '" keyTimes="' + opKT + '" dur="' + TOTAL_DUR + 's" begin="' + baseDelay + 's" repeatCount="indefinite"/>';
+                html += '<animateMotion dur="' + TOTAL_DUR + 's" begin="' + baseDelay + 's" repeatCount="indefinite" fill="freeze" calcMode="linear" keyTimes="' + keyTimes + '" keyPoints="' + keyPoints + '">';
+                html += '<mpath href="#flowPath' + si + '"/>';
+                html += '</animateMotion>';
+                html += '</circle>';
+            });
+        });
+
+        // Add path IDs for animateMotion references
+        segments.forEach(function(seg, i) {
+            html += '<path id="flowPath' + i + '" d="' + seg.d + '" fill="none" stroke="none"/>';
+        });
+
+        // Endpoint glow pulsesat each card connection point
+        var glowPoints = [
+            // Segment 1: Input → Card I
+            { x: s1Start.x, y: s1Start.y, color: '#4F8BCA' },
+            { x: s1End.x,   y: s1End.y,   color: '#5AB4AC' },
+            // Segment 2: Card I → Card II
+            { x: s2Start.x, y: s2Start.y, color: '#5AB4AC' },
+            { x: s2End.x,   y: s2End.y,   color: '#4F8BCA' },
+            // Segment 3: Card II → Card III
+            { x: s3Start.x, y: s3Start.y, color: '#4F8BCA' },
+            { x: s3End.x,   y: s3End.y,   color: '#5AB4AC' },
+            // Segment 4: Card III → Output
+            { x: s4Start.x, y: s4Start.y, color: '#5AB4AC' },
+            { x: s4End.x,   y: s4End.y,   color: '#4F8BCA' }
+        ];
+        glowPoints.forEach(function(gp, i) {
+            html += '<circle cx="' + gp.x + '" cy="' + gp.y + '" r="3" fill="' + gp.color + '" opacity="0.3" filter="url(#flowGlowSm)">';
+            html += '<animate attributeName="r" values="2;6;2" dur="3s" begin="' + (i * 0.35) + 's" repeatCount="indefinite"/>';
+            html += '<animate attributeName="opacity" values="0.3;0.6;0.3" dur="3s" begin="' + (i * 0.35) + 's" repeatCount="indefinite"/>';
+            html += '</circle>';
+        });
+
+        svg.innerHTML = html;
+        svg.setAttribute('viewBox', '0 0 ' + pRect.width + ' ' + pRect.height);
+        svg.style.width = pRect.width + 'px';
+        svg.style.height = pRect.height + 'px';
+    }
+
+    // Debounced rebuild on resize
+    var flowResizeTimer;
+    window.addEventListener('resize', function() {
+        clearTimeout(flowResizeTimer);
+        flowResizeTimer = setTimeout(buildFlowSVG, 200);
+    });
+    window.addEventListener('load', function() {
+        setTimeout(buildFlowSVG, 300);
+        setTimeout(buildFlowSVG, 800);
+        setTimeout(buildFlowSVG, 1500);
+    });
+
+    // ─── Language Toggle (EN ↔ 中文) ───
+    var currentLang = 'en';
+    function toggleLang() {
+        currentLang = currentLang === 'en' ? 'zh' : 'en';
+        var btn = document.getElementById('langToggleBtn');
+        if (currentLang === 'zh') {
+            btn.innerHTML = '<span class="lang-active">中</span> / <span class="lang-inactive">EN</span>';
+        } else {
+            btn.innerHTML = '<span class="lang-inactive">中</span> / <span class="lang-active">EN</span>';
+        }
+        document.documentElement.lang = currentLang === 'en' ? 'en' : 'zh-CN';
+
+        // Swap text for elements with data-en / data-zh
+        document.querySelectorAll('[data-en]').forEach(function(el) {
+            var text = el.getAttribute('data-' + currentLang);
+            if (text !== null) {
+                // Check for HTML variant first
+                var htmlAttr = el.getAttribute('data-' + currentLang + '-html');
+                if (htmlAttr !== null) {
+                    el.innerHTML = htmlAttr;
+                } else {
+                    el.textContent = text;
+                }
+            }
+        });
+        // Also handle elements that only have data-*-html
+        document.querySelectorAll('[data-en-html]').forEach(function(el) {
+            var html = el.getAttribute('data-' + currentLang + '-html');
+            if (html !== null) {
+                el.innerHTML = html;
+            }
+        });
     }
 </script>
 </body>
