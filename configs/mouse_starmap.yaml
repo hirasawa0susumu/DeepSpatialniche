@@ -52,7 +52,7 @@ train:
   resume_ckpt_path: null
 
 infer:
-  checkpoint: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/deepspatial-epoch=09-loss=0.1263.ckpt           # path to .ckpt file (required)
+  checkpoint: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/deepspatial-epoch=09-loss=0.1532.ckpt           # path to .ckpt file (required)
   output: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/mouse_starmap_reconstructed_3d.h5ad
   sampling_method: dopri5       # dopri5 | euler
   atol: 0.00001
