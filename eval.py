@@ -199,12 +199,40 @@ def morans_i_correlation(adata_recon, adata_gt, n_top_genes=100, n_neighbors=8):
         moran_gt.append(_morans_i(expr_g, coords_g))
         moran_recon.append(_morans_i(expr_r, coords_r))
 
+    moran_gt = np.array(moran_gt)
+    moran_recon = np.array(moran_recon)
     valid = ~(np.isnan(moran_gt) | np.isnan(moran_recon))
     if valid.sum() < 3:
-        return float("nan"), top_genes[:5]
+        return float("nan"), top_genes[:5], None, None
 
-    r = float(np.corrcoef(np.array(moran_gt)[valid], np.array(moran_recon)[valid])[0, 1])
-    return r, top_genes
+    r = float(np.corrcoef(moran_gt[valid], moran_recon[valid])[0, 1])
+    return r, top_genes, moran_gt, moran_recon
+
+
+def _plot_morans_i(moran_gt, moran_recon, r, top_genes, output_dir):
+    """Scatter plot of GT vs Recon Moran's I for top HVGs (paper Figs. 2c–e)."""
+    if moran_gt is None or moran_recon is None:
+        return
+    valid = ~(np.isnan(moran_gt) | np.isnan(moran_recon))
+    mg, mr = moran_gt[valid], moran_recon[valid]
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.scatter(mg, mr, s=20, alpha=0.6, edgecolors='none', c='#1f77b4')
+    ax.set_xlabel("Ground Truth Moran's I")
+    ax.set_ylabel("Reconstruction Moran's I")
+    ax.set_title(f"Moran's I Correlation (top {valid.sum()} HVGs)")
+
+    lo = min(mg.min(), mr.min()) - 0.05
+    hi = max(mg.max(), mr.max()) + 0.05
+    ax.plot([lo, hi], [lo, hi], '--', color='gray', linewidth=0.8)
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+
+    ax.text(0.05, 0.95, f'Pearson R = {r:.4f}', transform=ax.transAxes,
+            fontsize=12, va='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "morans_i.pdf"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +300,22 @@ def spatial_expression_correlation(adata_recon, adata_gt, gene_name=None, n_samp
     expr_r, expr_g = expr_r[idx_r], expr_g[nn_idx]
     corr = float(np.corrcoef(expr_r, expr_g)[0, 1]) if expr_r.std() > 0 and expr_g.std() > 0 else 0.0
     return gene_name, corr
+
+
+def _plot_patch_cosine(patch_cos_mean, patch_cos_std, output_dir):
+    """Bar plot of patch-level cell-type cosine similarity (paper Figs. 2c–e)."""
+    fig, ax = plt.subplots(figsize=(4, 4))
+    bars = ax.bar(["Mean", "Std"], [patch_cos_mean, patch_cos_std],
+                  color=['#d62728', '#7f7f7f'], width=0.5)
+    ax.axhline(y=1, color='gray', linestyle='--', linewidth=0.8)
+    ax.set_ylabel("Patch Cosine Similarity")
+    ax.set_title("Patch-level Cell-type Cosine Similarity\n(1 = perfect)")
+    for bar, val in zip(bars, [patch_cos_mean, patch_cos_std]):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 0.02,
+                f'{val:.4f}', ha='center', fontsize=12)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "patch_cosine.pdf"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -376,10 +420,10 @@ def main():
         # Paper metrics
         print("  Patch-level cell-type cosine similarity ...")
         patch_cos_mean, patch_cos_std = patch_cell_type_cosine(
-            adata_recon_vis, adata_gt, label_key, patch_size=(50, 50, 30))
+            adata_recon_vis, adata_gt, label_key, patch_size=(50, 50, 50))
 
         print("  Moran's I correlation (top 100 HVGs) ...")
-        moran_r, _ = morans_i_correlation(adata_recon_vis, adata_gt, n_top_genes=100)
+        moran_r, _, moran_gt, moran_recon = morans_i_correlation(adata_recon_vis, adata_gt, n_top_genes=100)
 
         # Supplementary metrics
         per_bin, mean_js = cell_type_consistency(adata_recon_vis, adata_gt, label_key)
@@ -420,6 +464,8 @@ def main():
         recon_norm = _normalize_coords(adata_recon_vis)
 
         if not no_metrics:
+            _plot_patch_cosine(patch_cos_mean, patch_cos_std, output_dir)
+            _plot_morans_i(moran_gt, moran_recon, moran_r, None, output_dir)
             _plot_js_div(per_bin, output_dir)
             _plot_continuity(cont_recon, cont_gt, output_dir)
 

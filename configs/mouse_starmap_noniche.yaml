@@ -34,7 +34,7 @@ model:
   num_heads: 8
   mlp_ratio: 4.0
   path_type: Linear            # Linear | GVP | VP
-  use_niche_encoder: true
+  use_niche_encoder: false
   niche_hidden_dim: 256
   niche_num_heads: 4
   niche_dropout: 0.3
@@ -44,7 +44,7 @@ train:
   weight_decay: 0.00001
   lambda_g: 0.1                # gene loss weight
   lambda_c: 10.0               # cell type loss weight
-  max_epochs: 12
+  max_epochs: 10
   accelerator: auto            # auto | gpu | cpu
   devices: auto                # auto | 1 | [0,1]
   save_dir: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_noniche/
@@ -61,12 +61,12 @@ infer:
   steps: 100                    # ODE integration steps per slice gap
   chunk_size: 2048
   device: auto                  # auto | cuda | cpu
-  use_niche: true
+  use_niche: false
 
 eval:
-  recon: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/mouse_starmap_reconstructed_3d.h5ad                 # path to reconstructed 3D h5ad (required)
+  recon: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_noniche/mouse_starmap_reconstructed_3d.h5ad                 # path to reconstructed 3D h5ad (required)
   ground_truth: /root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad            # path to ground truth 3D h5ad (required)
-  output_dir: ./DeepSpatialniche/eval_results_new
+  output_dir: ./DeepSpatialniche/eval_results_noniche
   label_key: Harmony_labels           # cell type column in adata.obs
   gene: null                    # gene for spatial correlation (auto-pick if null)
   z_range: null                 # [min, max] Z range for GT subset (auto if null)
