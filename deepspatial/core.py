@@ -371,12 +371,13 @@ class DeepSpatial:
         return adata_3d
 
     @torch.no_grad()
-    def reconstruct_between_slices(self, 
-                                   adata0: ad.AnnData, 
-                                   adata1: ad.AnnData, 
+    def reconstruct_between_slices(self,
+                                   adata0: ad.AnnData,
+                                   adata1: ad.AnnData,
                                    thickness: float,
-                                   steps: int = 20, 
+                                   steps: int = 20,
                                    chunk_size: int = 2048,
+                                   use_niche: bool = True,
                                    device: str = "auto") -> ad.AnnData:
         """
         Generates a 3D volume segment between two specific AnnData slices.
@@ -387,6 +388,7 @@ class DeepSpatial:
             steps: Number of integration steps for the ODE solver.
             thickness: Physical distance (um) between generated cells, controlling density.
             chunk_size: Batch size for ODE integration to manage VRAM usage.
+            use_niche: Whether to use niche encoder (set False for ablation).
             device: Computing device ('auto', 'cuda', 'cpu', or specific 'cuda:n').
 
         Returns:
@@ -414,7 +416,8 @@ class DeepSpatial:
         mix_data = self._generate_and_prune_optimized(
             x0, g0, c0, x1, g1, c1, z0, z1, steps,
             target_cells, total_cells, dev, chunk_size,
-            niche_ref_0, niche_ref_1,
+            niche_ref_0, niche_ref_1, use_niche=use_niche,
+        )
         )
 
         # Assemble and restore to physical coordinates
@@ -422,11 +425,12 @@ class DeepSpatial:
         return self._restore_3d_physical_coords(adata_segment)
 
     @torch.no_grad()
-    def reconstruct_full_volume(self, 
+    def reconstruct_full_volume(self,
                                 adata_list: list,
-                                thickness: float, 
-                                steps: int = 100, 
+                                thickness: float,
+                                steps: int = 100,
                                 chunk_size: int = 2048,
+                                use_niche: bool = True,
                                 device: str = "auto") -> ad.AnnData:
         """
         High-level API to reconstruct the entire 3D volume from a list of slices.
@@ -436,6 +440,7 @@ class DeepSpatial:
             thickness: Target physical distance (um) between cells in the Z-axis.
             steps: Number of ODE integration steps per gap.
             chunk_size: Processing batch size to prevent OOM on large datasets.
+            use_niche: Whether to use niche encoder (set False for ablation).
             device: Target device for the entire reconstruction process.
 
         Returns:
@@ -467,7 +472,8 @@ class DeepSpatial:
                 steps=steps,
                 thickness=thickness,
                 chunk_size=chunk_size,
-                device=device
+                use_niche=use_niche,
+                device=device,
             )
             
             segment_list.append(segment)
@@ -522,10 +528,11 @@ class DeepSpatial:
 
     def _generate_and_prune_optimized(self, x0, g0, c0, x1, g1, c1, z0, z1, steps,
                                        target_cells, total_cells, dev, chunk_size,
-                                       niche_ref_0=None, niche_ref_1=None):
+                                       niche_ref_0=None, niche_ref_1=None,
+                                       use_niche: bool = True):
         """Memory-efficient ODE integration and spatial density pruning."""
         N0, N1 = float(x0.shape[0]), float(x1.shape[0])
-        has_niche = (self.niche_encoder is not None and
+        has_niche = (use_niche and self.niche_encoder is not None and
                      niche_ref_0 is not None and niche_ref_1 is not None)
         # Use EMA niche encoder for inference if available
         _niche_enc = (

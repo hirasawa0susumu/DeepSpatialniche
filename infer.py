@@ -105,6 +105,8 @@ def main():
     p.add_argument("--steps", type=int, default=None)
     p.add_argument("--chunk_size", type=int, default=None)
     p.add_argument("--device", type=str, default=None)
+    p.add_argument("--use_niche", type=lambda x: x.lower() == "true", default=None,
+                   help="Whether to use niche encoder (default True). Set false for ablation.")
 
     args = p.parse_args()
 
@@ -177,6 +179,7 @@ def main():
         thickness=_v(args.thickness, ic.get("thickness"), 10.0),
         steps=_v(args.steps, ic.get("steps"), 100),
         chunk_size=_v(args.chunk_size, ic.get("chunk_size"), 2048),
+        use_niche=_v(args.use_niche, ic.get("use_niche"), True),
         device=_v(args.device, ic.get("device"), "auto"),
     )
 
