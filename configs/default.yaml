@@ -1,0 +1,89 @@
+# DeepSpatialniche default configuration — matches tutorial defaults
+# All parameters can be overridden via CLI, e.g.:
+#   python train.py --true_3d --data_path ./brain.h5ad
+#   python infer.py --checkpoint ./ckpt/last.ckpt --true_3d --data_path ./brain.h5ad
+
+# ---------------------------------------------------------------------------
+# data
+# ---------------------------------------------------------------------------
+data:
+  true_3d: false                         # true: single 3D h5ad → auto-slice
+  data_dir: null                          # (false) directory of .h5ad slice files
+  data_path: null                         # (true) path to single 3D .h5ad
+  # --- auto-slice (ignored when slice_ranges is set) ---
+  slice_thickness: 10.0
+  slice_gap: 20.0
+  # --- explicit ranges (overrides auto-slice; matches tutorial) ---
+  slice_ranges:                          # tutorial Deep STARmap mouse brain
+    - [5, 15]
+    - [35, 45]
+    - [65, 75]
+    - [95, 105]
+    - [125, 135]
+    - [155, 165]
+    - [185, 195]
+  spatial_key: spatial
+  z_key: z_coord
+  label_key: Harmony_labels              # tutorial uses Harmony_labels
+  batch_size: 512                         # tutorial default
+  num_workers: 4
+  n_samples_base: 50000
+  alpha_spatial: 0.5
+  uot_reg: 0.8
+  uot_tau: 0.05
+
+# ---------------------------------------------------------------------------
+# model
+# ---------------------------------------------------------------------------
+model:
+  patch_size: 8
+  hidden_size: 256
+  depth: 6
+  num_heads: 8
+  mlp_ratio: 4.0
+  path_type: Linear
+  use_niche_encoder: false               # tutorial did not use niche encoder
+  niche_hidden_dim: 128                   # niche token dimension
+  niche_num_heads: 4                      # attention heads in niche encoder
+  niche_dropout: 0.3                      # randomly drop niche during training (anti-shortcut)
+
+# ---------------------------------------------------------------------------
+# train
+# ---------------------------------------------------------------------------
+train:
+  lr: 0.0002
+  weight_decay: 0.00001
+  lambda_g: 0.1
+  lambda_c: 10.0
+  max_epochs: 10                          # tutorial default
+  accelerator: gpu                        # tutorial used GPU
+  devices: auto
+  save_dir: ./checkpoints
+  save_ckpt: true
+  resume_ckpt_path: null
+
+# ---------------------------------------------------------------------------
+# infer
+# ---------------------------------------------------------------------------
+infer:
+  checkpoint: null
+  output: reconstructed_3d.h5ad
+  sampling_method: dopri5
+  atol: 0.00001
+  rtol: 0.00001
+  thickness: 10.0
+  steps: 100
+  chunk_size: 2048
+  device: auto
+
+# ---------------------------------------------------------------------------
+# eval
+# ---------------------------------------------------------------------------
+eval:
+  recon: null
+  ground_truth: null
+  output_dir: ./eval_results
+  label_key: Harmony_labels               # matches tutorial
+  gene: null
+  z_range: null
+  no_plots: false

@@ -12,16 +12,17 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from .data_utils import DeepSpatialDataset
 from .models import GiT
+from .models.niche_encoder import NicheEncoder
 from .module import DeepSpatialModule
 
 
 class DeepSpatial:
     """
-    DeepSpatial: Reconstructing True 3D Spatial Omics at Single-Cell Resolution.
+    DeepSpatialniche: Reconstructing True 3D Spatial Omics at Single-Cell Resolution.
     """
     def __init__(self):
         """
-        Initializes an empty DeepSpatial instance. 
+        Initializes an empty DeepSpatialniche instance.
         Configurations and paths are injected during functional method calls.
         """
         # Data and Dataloader
@@ -33,6 +34,7 @@ class DeepSpatial:
         self.num_classes = None
         self.model = None
         self.module = None
+        self.niche_encoder = None
         
         # Metadata for persistence and restoration
         self.categories = None
@@ -60,10 +62,10 @@ class DeepSpatial:
                 raise KeyError(f"Z-coord key '{self.z_key}' not found in slice {i}.")
             
             all_spatial.append(adata.obsm[self.spatial_key])
-            z_raw_list.append(adata.obs[self.z_key].iloc[0])
-            
+            z_raw_list.append(float(adata.obs[self.z_key].iloc[0]))
+
         all_spatial = np.vstack(all_spatial)
-        z_raw_arr = np.array(z_raw_list)
+        z_raw_arr = np.array(z_raw_list, dtype=np.float64)
         
         # Store stats for physical space restoration
         self.spatial_stats = {
@@ -79,10 +81,12 @@ class DeepSpatial:
     
         # Perform non-destructive normalization
         for i, adata in enumerate(adata_list):
+            # Ensure z column is numeric
+            adata.obs[self.z_key] = adata.obs[self.z_key].astype(float)
             coords = adata.obsm[self.spatial_key].copy()
             coords[:, 0] = (coords[:, 0] - self.spatial_stats['x_min']) / self.spatial_stats['x_range']
             coords[:, 1] = (coords[:, 1] - self.spatial_stats['y_min']) / self.spatial_stats['y_range']
-            
+
             adata.obsm['spatial_norm'] = coords
             adata.obs['z_norm'] = norm_z_arr[i]
 
@@ -143,8 +147,8 @@ class DeepSpatial:
         self.gene_dim = batch['g0'].shape[1]
         self.num_classes = batch['c0'].shape[1]
 
-    def build_model(self, 
-                    patch_size: int = 8,       
+    def build_model(self,
+                    patch_size: int = 8,
                     hidden_size: int = 256,
                     depth: int = 6,
                     num_heads: int = 8,
@@ -152,14 +156,18 @@ class DeepSpatial:
                     path_type: str = "Linear",
                     lr: float = 2e-4,
                     weight_decay: float = 1e-5,
-                    lambda_g: float = 0.1,  
+                    lambda_g: float = 0.1,
                     lambda_c: float = 10.0,
-                    sampling_method: str = "dopri5", 
-                    atol: float = 1e-5, 
-                    rtol: float = 1e-5):
+                    sampling_method: str = "dopri5",
+                    atol: float = 1e-5,
+                    rtol: float = 1e-5,
+                    use_niche_encoder: bool = True,
+                    niche_hidden_dim: int = 128,
+                    niche_num_heads: int = 4,
+                    niche_dropout: float = 0.3):
         """
         Instantiates the GiT network architecture and Flow Matching logic.
-        
+
         Args:
             patch_size: Tokenization patch size for spatial coordinates.
             hidden_size: Transformer embedding dimension.
@@ -174,6 +182,10 @@ class DeepSpatial:
             sampling_method: ODE solver for inference (e.g., 'dopri5', 'euler').
             atol: Absolute tolerance for ODE solver.
             rtol: Relative tolerance for ODE solver.
+            use_niche_encoder: Whether to enable the niche encoder.
+            niche_hidden_dim: Niche encoder hidden dimension.
+            niche_num_heads: Niche encoder attention heads.
+            niche_dropout: Probability of dropping niche token during training.
         """
         if self.gene_dim is None or self.num_classes is None:
             raise ValueError("Dimensions unknown. Call `setup_data()` first.")
@@ -185,7 +197,13 @@ class DeepSpatial:
             "num_heads": num_heads,
             "mlp_ratio": mlp_ratio
         }
-        
+
+        self.niche_encoder_config = {
+            "use_niche_encoder": use_niche_encoder,
+            "niche_hidden_dim": niche_hidden_dim,
+            "niche_num_heads": niche_num_heads,
+        }
+
         self.train_config = {
             "path_type": path_type,
             "prediction": "velocity",
@@ -198,16 +216,31 @@ class DeepSpatial:
             "lambda_c": lambda_c,
             "sampling_method": sampling_method,
             "atol": atol,
-            "rtol": rtol
+            "rtol": rtol,
+            "niche_dropout": niche_dropout,
         }
 
+        model_niche_dim = niche_hidden_dim if use_niche_encoder else 0
         self.model = GiT(
             gene_dim=self.gene_dim,
             num_classes=self.num_classes,
+            niche_hidden_dim=model_niche_dim,
             **self.model_config
         )
 
-        self.module = DeepSpatialModule(self.train_config, self.model)
+        if use_niche_encoder:
+            self.niche_encoder = NicheEncoder(
+                gene_dim=self.gene_dim,
+                hidden_dim=niche_hidden_dim,
+                num_heads=niche_num_heads,
+            )
+        else:
+            self.niche_encoder = None
+
+        self.module = DeepSpatialModule(
+            self.train_config, self.model,
+            niche_encoder=self.niche_encoder,
+        )
 
     def _save_config(self, save_dir: str):
         """Internal helper to persist metadata and configurations."""
@@ -221,19 +254,24 @@ class DeepSpatial:
             'z_key': self.z_key,
             'label_key': self.label_key,
             'model_config': self.model_config,
-            'train_config': self.train_config
+            'train_config': self.train_config,
+            'niche_encoder_config': getattr(self, 'niche_encoder_config', {}),
         }
         with open(os.path.join(save_dir, 'config.json'), 'w') as f:
             json.dump(config, f)
 
-    def load_checkpoint(self, ckpt_path: str, config_path: str = None, sampling_method: str = "dopri5"):
+    def load_checkpoint(self, ckpt_path: str, config_path: str = None,
+                        sampling_method: str = "dopri5",
+                        atol: float = None, rtol: float = None):
         """
         Loads model weights and metadata for inference or resuming.
-        
+
         Args:
             ckpt_path: Path to the `.ckpt` file.
             config_path: Path to `config.json`. Defaults to the same folder as ckpt_path.
             sampling_method: Overrides the ODE solver for this inference session.
+            atol: Overrides absolute tolerance for the ODE solver.
+            rtol: Overrides relative tolerance for the ODE solver.
         """
         if not os.path.exists(ckpt_path):
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -253,12 +291,24 @@ class DeepSpatial:
             self.categories = pd.Index(config['categories'])
             self.model_config = config.get('model_config', {})
             self.train_config = config.get('train_config', {})
+            self.niche_encoder_config = config.get('niche_encoder_config', {})
+            if not self.niche_encoder_config:
+                self.niche_encoder_config = {'use_niche_encoder': False}
         else:
              raise ValueError("Metadata 'config.json' not found. Cannot rebuild model.")
 
         if self.module is None:
             self.train_config['sampling_method'] = sampling_method
-            self.build_model(**self.model_config, **self.train_config)
+            if atol is not None:
+                self.train_config['atol'] = atol
+            if rtol is not None:
+                self.train_config['rtol'] = rtol
+            # Filter: only pass keys that build_model accepts
+            build_keys = {"path_type", "lr", "weight_decay", "lambda_g", "lambda_c",
+                          "sampling_method", "atol", "rtol"}
+            filtered_train = {k: v for k, v in self.train_config.items() if k in build_keys}
+            self.build_model(**self.model_config, **filtered_train,
+                             **self.niche_encoder_config)
             
         checkpoint = torch.load(ckpt_path, map_location=torch.device('cpu'))
         state_dict = checkpoint.get('state_dict', checkpoint)
@@ -355,14 +405,16 @@ class DeepSpatial:
         self.module.eval()
         
         # Extract features and normalized Z coordinates
-        x0, z0, g0, c0, x1, z1, g1, c1, target_cells, total_cells = self._setup_and_extract(
+        (x0, z0, g0, c0, x1, z1, g1, c1,
+         target_cells, total_cells, niche_ref_0, niche_ref_1) = self._setup_and_extract(
             adata0, adata1, thickness, dev
         )
 
         # Execute chunked ODE integration
         mix_data = self._generate_and_prune_optimized(
-            x0, g0, c0, x1, g1, c1, z0, z1, steps, 
-            target_cells, total_cells, dev, chunk_size
+            x0, g0, c0, x1, g1, c1, z0, z1, steps,
+            target_cells, total_cells, dev, chunk_size,
+            niche_ref_0, niche_ref_1,
         )
 
         # Assemble and restore to physical coordinates
@@ -398,7 +450,7 @@ class DeepSpatial:
             raise ValueError("adata_list must contain at least 2 slices.")
         
         # Initialize progress bar
-        pbar = tqdm(range(num_pairs), desc="DeepSpatial: 3D Reconstruct", unit="gap")
+        pbar = tqdm(range(num_pairs), desc="DeepSpatialniche: 3D Reconstruct", unit="gap")
         
         for i in pbar:
             ad0, ad1 = adata_list[i], adata_list[i+1]
@@ -450,16 +502,37 @@ class DeepSpatial:
             g_arr = adata.X.toarray() if scipy.sparse.issparse(adata.X) else adata.X
             g = torch.tensor(g_arr, dtype=torch.float32, device=dev)
             c_idx = torch.tensor(pd.Categorical(adata.obs[self.label_key], categories=self.categories).codes.astype(np.int64), device=dev)
-            return x, z, g, c_idx
-            
-        x0, z0, g0, c0 = extract(adata0)
-        x1, z1, g1, c1 = extract(adata1)
-        
-        return x0, z0, g0, c0, x1, z1, g1, c1, target_cells, total_cells
+            # Niche reference data (optional, may not exist for old data)
+            if 'niche_neighbors' in adata.uns:
+                nbr = torch.tensor(adata.uns['niche_neighbors'], dtype=torch.long, device=dev)
+                delta = torch.tensor(adata.uns['niche_deltas'], dtype=torch.float32, device=dev)
+                dist = torch.tensor(adata.uns['niche_dists'], dtype=torch.float32, device=dev)
+                msk = torch.tensor(np.ones((adata.n_obs, 32), dtype=bool), dtype=torch.bool, device=dev)
+                if 'niche_mask' in adata.uns:
+                    msk = torch.tensor(adata.uns['niche_mask'], dtype=torch.bool, device=dev)
+                niche_ref = {'neighbors': nbr, 'deltas': delta, 'dists': dist, 'mask': msk}
+            else:
+                niche_ref = None
+            return x, z, g, c_idx, niche_ref
 
-    def _generate_and_prune_optimized(self, x0, g0, c0, x1, g1, c1, z0, z1, steps, target_cells, total_cells, dev, chunk_size):
+        x0, z0, g0, c0, niche_ref_0 = extract(adata0)
+        x1, z1, g1, c1, niche_ref_1 = extract(adata1)
+
+        return x0, z0, g0, c0, x1, z1, g1, c1, target_cells, total_cells, niche_ref_0, niche_ref_1
+
+    def _generate_and_prune_optimized(self, x0, g0, c0, x1, g1, c1, z0, z1, steps,
+                                       target_cells, total_cells, dev, chunk_size,
+                                       niche_ref_0=None, niche_ref_1=None):
         """Memory-efficient ODE integration and spatial density pruning."""
         N0, N1 = float(x0.shape[0]), float(x1.shape[0])
+        has_niche = (self.niche_encoder is not None and
+                     niche_ref_0 is not None and niche_ref_1 is not None)
+        # Use EMA niche encoder for inference if available
+        _niche_enc = (
+            self.module.ema_niche_encoder
+            if getattr(self.module, 'ema_niche_encoder', None) is not None
+            else self.niche_encoder
+        )
         u = torch.rand(total_cells, device=dev)
         
         # Inverse transform sampling for time distribution
@@ -498,6 +571,23 @@ class DeepSpatial:
                     'z1': torch.full((len(chunk_parents), 1), z_end, device=dev),
                     'delta_z': torch.full((len(chunk_parents), 1), z_end - z_start, device=dev)
                 }
+
+                # Compute niche token for parent cells
+                if has_niche:
+                    nref = niche_ref_0 if is_forward else niche_ref_1
+                    nbr_idx = nref['neighbors'][chunk_parents]              # (chunk, K)
+                    g_nbr = g_ref[nbr_idx]                                   # (chunk, K, gene_dim)
+                    delta_nbr = nref['deltas'][chunk_parents]               # (chunk, K, 2)
+                    dist_nbr = nref['dists'][chunk_parents]                 # (chunk, K)
+                    batch['niche_token'] = _niche_enc(
+                        g_center=g_ref[chunk_parents],
+                        pos_center=x_ref[chunk_parents],
+                        g_nbrs=g_nbr,
+                        delta_nbrs=delta_nbr,
+                        dist_nbrs=dist_nbr,
+                        mask_nbr=nref['mask'][chunk_parents],
+                    )
+
                 res = self.module.sample(batch, mode="ODE", steps=steps)
                 
                 if not is_forward:

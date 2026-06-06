@@ -1,0 +1,72 @@
+# DeepSpatialniche default configuration
+# Override via: python train.py --config my_config.yaml
+# Or via CLI:   python train.py --data_dir ./data/ --epochs 200
+
+data:
+  true_3d: true               # true: slice from single 3D h5ad; false: load pre-sliced files
+  data_dir: null                # (true_3d=false) path to .h5ad directory
+  data_path: /root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad               # (true_3d=true) path to single 3D .h5ad
+  slice_thickness: 10.0
+  slice_gap: 20.0
+  # --- explicit ranges (overrides auto-slice; matches tutorial) ---
+  slice_ranges: # tutorial Deep STARmap mouse brain
+    - [ 5, 15 ]
+    - [ 35, 45 ]
+    - [ 65, 75 ]
+    - [ 95, 105 ]
+    - [ 125, 135 ]
+    - [ 155, 165 ]
+    - [ 185, 195 ]
+  spatial_key: spatial          # key in adata.obsm for XY coordinates
+  z_key: z_coord                # key in adata.obs for Z coordinate
+  label_key: Harmony_labels       # key in adata.obs for cell type labels
+  batch_size: 512
+  num_workers: 4
+  n_samples_base: 50000
+  alpha_spatial: 0.5           # UOT spatial weight (0~1)
+  uot_reg: 0.8                 # UOT entropy regularization
+  uot_tau: 0.05               # UOT marginal relaxation
+
+model:
+  patch_size: 8
+  hidden_size: 256
+  depth: 6
+  num_heads: 8
+  mlp_ratio: 4.0
+  path_type: Linear            # Linear | GVP | VP
+  use_niche_encoder: true
+  niche_hidden_dim: 256
+  niche_num_heads: 4
+  niche_dropout: 0.3
+
+train:
+  lr: 0.0002
+  weight_decay: 0.00001
+  lambda_g: 0.1                # gene loss weight
+  lambda_c: 10.0               # cell type loss weight
+  max_epochs: 10
+  accelerator: auto            # auto | gpu | cpu
+  devices: auto                # auto | 1 | [0,1]
+  save_dir: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/
+  save_ckpt: true
+  resume_ckpt_path: null
+
+infer:
+  checkpoint: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/deepspatial-epoch=09-loss=0.1263.ckpt           # path to .ckpt file (required)
+  output: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/mouse_starmap_reconstructed_3d.h5ad
+  sampling_method: dopri5       # dopri5 | euler
+  atol: 0.00001
+  rtol: 0.00001
+  thickness: 10.0               # target Z spacing (um) between generated cells
+  steps: 100                    # ODE integration steps per slice gap
+  chunk_size: 2048
+  device: auto                  # auto | cuda | cpu
+
+eval:
+  recon: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/mouse_starmap_reconstructed_3d.h5ad                 # path to reconstructed 3D h5ad (required)
+  ground_truth: /root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad            # path to ground truth 3D h5ad (required)
+  output_dir: ./DeepSpatialniche/eval_results_new
+  label_key: Harmony_labels           # cell type column in adata.obs
+  gene: null                    # gene for spatial correlation (auto-pick if null)
+  z_range: null                 # [min, max] Z range for GT subset (auto if null)
+  no_plots: false               # skip visualization, metrics only

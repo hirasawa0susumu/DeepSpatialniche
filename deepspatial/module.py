@@ -8,7 +8,7 @@ from .transport import create_transport, Sampler
 
 class DeepSpatialModule(pl.LightningModule):
     """
-    DeepSpatial Module for Training & Inference.
+    DeepSpatialniche Module for Training & Inference.
 
     Parameters
     ----------
@@ -19,19 +19,25 @@ class DeepSpatialModule(pl.LightningModule):
         The core neural network architecture (e.g., the GiT model) that predicts 
         the velocity fields.
     """
-    def __init__(self, args, model):
+    def __init__(self, args, model, niche_encoder=None):
         """
-        Initializes an LightningModule instance for DeepSpatial.
+        Initializes an LightningModule instance for DeepSpatialniche.
         """
         super().__init__()
         self.save_hyperparameters(args)
-        
+
         # Core Model
         self.model = model
-        
+        self.niche_encoder = niche_encoder
+
         # EMA Setup
         self.ema_decay = self.hparams.get('ema_decay', 0.999)
         self.ema_model = deepcopy(self.model)
+        if niche_encoder is not None:
+            self.ema_niche_encoder = deepcopy(niche_encoder)
+            self._freeze(self.ema_niche_encoder)
+        else:
+            self.ema_niche_encoder = None
         self._freeze(self.ema_model)
 
         # Transport & Path Setup
@@ -52,8 +58,8 @@ class DeepSpatialModule(pl.LightningModule):
     def configure_optimizers(self):
         """Initialize AdamW optimizer with weight decay."""
         return torch.optim.AdamW(
-            self.model.parameters(), 
-            lr=self.hparams.lr, 
+            self.parameters(),
+            lr=self.hparams.lr,
             weight_decay=self.hparams.get('weight_decay', 1e-5)
         )
 
@@ -79,9 +85,26 @@ class DeepSpatialModule(pl.LightningModule):
         _, ct, uc_t = self.transport.path_sampler.plan(t, c0, c1)
         _, zt, _ = self.transport.path_sampler.plan(t, z0, z1)
 
+        # Niche token: fixed source-slice microenvironment (consistent with inference)
+        niche_token = None
+        if self.niche_encoder is not None and 'g_nbr' in batch:
+            niche_dropout = self.hparams.get('niche_dropout', 0.3)
+            if self.training and torch.rand(1).item() < niche_dropout:
+                niche_token = None
+            else:
+                niche_token = self.niche_encoder(
+                    g_center=g0,
+                    pos_center=x0,
+                    g_nbrs=batch['g_nbr'],
+                    delta_nbrs=batch['delta_nbr'],
+                    dist_nbrs=batch['dist_nbr'],
+                    mask_nbr=batch.get('mask_nbr'),
+                )
+
         # 3. Predict velocity fields
         vx_pred, vg_pred, vc_pred = self.model(
-            xt=xt, gt=gt, t=t, zt=zt, delta_z=delta_z, ct=ct
+            xt=xt, gt=gt, t=t, zt=zt, delta_z=delta_z, ct=ct,
+            niche_token=niche_token,
         )
 
         # Compute losses (Mean Squared Error on velocity)
@@ -124,6 +147,11 @@ class DeepSpatialModule(pl.LightningModule):
         """Update EMA model weights with exponential decay."""
         for ema_param, model_param in zip(self.ema_model.parameters(), self.model.parameters()):
             ema_param.data.mul_(self.ema_decay).add_(model_param.data, alpha=1 - self.ema_decay)
+        if self.ema_niche_encoder is not None and self.niche_encoder is not None:
+            for ema_param, model_param in zip(
+                self.ema_niche_encoder.parameters(), self.niche_encoder.parameters()
+            ):
+                ema_param.data.mul_(self.ema_decay).add_(model_param.data, alpha=1 - self.ema_decay)
 
     def on_load_checkpoint(self, checkpoint):
         """Ensure EMA model is also loaded from checkpoint."""
@@ -176,7 +204,8 @@ class DeepSpatialModule(pl.LightningModule):
         x0, g0, c0 = batch['x0'], batch['g0'], batch['c0']
         x_dim, g_dim = x0.shape[-1], g0.shape[-1]
         z0, z1, delta_z = batch['z0'], batch['z1'], batch['delta_z']
-        
+        niche_token = batch.get('niche_token', None)  # pre-computed niche token
+
         # Concatenate for joint integration
         init_state = torch.cat([x0, g0, c0], dim=-1)
 
@@ -185,7 +214,7 @@ class DeepSpatialModule(pl.LightningModule):
             xt = joint_state_t[..., :x_dim]
             gt = joint_state_t[..., x_dim : x_dim + g_dim]
             ct = joint_state_t[..., x_dim + g_dim :]
-            
+
             # Ensure t is a tensor on the correct device
             if torch.is_tensor(t):
                 t_val = t.item() if t.dim() == 0 else t[0].item()
@@ -199,7 +228,8 @@ class DeepSpatialModule(pl.LightningModule):
 
             # Forward pass through EMA model
             vx, vg, vc = self.ema_model(
-                xt=xt, gt=gt, t=t_tensor, zt=zt, delta_z=delta_z, ct=ct
+                xt=xt, gt=gt, t=t_tensor, zt=zt, delta_z=delta_z, ct=ct,
+                niche_token=niche_token,
             )
             return torch.cat([vx, vg, vc], dim=-1)
 

@@ -1,0 +1,48 @@
+# DeepSpatial default configuration
+# Override via: python train.py --config my_config.yaml
+# Or via CLI:   python train.py --data_dir ./data/ --epochs 200
+
+data:
+  data_dir: /root/autodl-tmp/wangjiaxiang/isotfm/datasets/merfish/held_out/       # path to directory containing .h5ad files (required)
+  spatial_key: spatial         # key in adata.obsm for XY coordinates
+  z_key: slice_id               # key in adata.obs for Z coordinate
+  label_key: cell_class        # key in adata.obs for cell type labels
+  batch_size: 128
+  num_workers: 4
+  n_samples_base: 50000
+  alpha_spatial: 0.5           # UOT spatial weight (0~1)
+  uot_reg: 0.8                 # UOT entropy regularization
+  uot_tau: 0.05                # UOT marginal relaxation
+
+model:
+  patch_size: 8
+  hidden_size: 256
+  depth: 6
+  num_heads: 8
+  mlp_ratio: 4.0
+  path_type: Linear            # Linear | GVP | VP
+  use_niche_encoder: true
+  niche_hidden_dim: 128
+  niche_num_heads: 4
+  niche_dropout: 0.3
+
+train:
+  lr: 0.001
+  weight_decay: 0.00001
+  lambda_g: 0.1                # gene loss weight
+  lambda_c: 10.0               # cell type loss weight
+  max_epochs: 1000
+  accelerator: auto            # auto | gpu | cpu
+  devices: auto                # auto | 1 | [0,1]
+  save_dir: ./checkpoints
+  save_ckpt: true
+  resume_ckpt_path: null
+
+infer:
+  sampling_method: dopri5      # dopri5 | euler
+  atol: 0.00001
+  rtol: 0.00001
+  thickness: 10.0              # target Z spacing (um) between generated cells
+  steps: 100                   # ODE integration steps per slice gap
+  chunk_size: 2048
+  device: auto                 # auto | cuda | cpu

@@ -7,10 +7,11 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from .uot_solver import compute_uot_coupling
+from ..models.niche_encoder import precompute_neighbors
 
 class DeepSpatialDataset(Dataset):
     """
-    DeepSpatial Global Trajectory Dataset.
+    DeepSpatialniche Global Trajectory Dataset.
     Constructs cross-slice cell pairs using Unbalanced Optimal Transport (UOT) 
     to provide continuous training samples for Flow Matching.
     """
@@ -60,6 +61,9 @@ class DeepSpatialDataset(Dataset):
             self.num_classes = 1
             self.id2label = {0: "unknown"}
 
+        # Precompute spatial KNN neighbors for niche encoding
+        precompute_neighbors(adata_list, spatial_key=spatial_key, K=32)
+
         if mode != 'fit':
             self.adata_list = self.adata_list[:2]
 
@@ -67,7 +71,9 @@ class DeepSpatialDataset(Dataset):
         self.trajectory_pairs = {
             'x0': [], 'g0': [], 'c0': [], 'z0': [],
             'x1': [], 'g1': [], 'c1': [], 'z1': [],
-            'delta_z': [],              
+            'delta_z': [],
+            # Niche fields (source cell's local microenvironment)
+            'g_nbr': [], 'c_nbr': [], 'delta_nbr': [], 'dist_nbr': [], 'mask_nbr': [],
         }
         
         self._build_trajectory_dataset()
@@ -99,7 +105,7 @@ class DeepSpatialDataset(Dataset):
         total_weight = sum(pair_sizes)
         sampling_counts = [int(self.n_samples_base * (w / total_weight)) for w in pair_sizes]
 
-        for k in tqdm(range(num_slices - 1), desc="DeepSpatial: Building Trajectories"):
+        for k in tqdm(range(num_slices - 1), desc="DeepSpatialniche: Building Trajectories"):
             n_to_sample = sampling_counts[k]
             if n_to_sample <= 0:
                 continue
@@ -125,11 +131,31 @@ class DeepSpatialDataset(Dataset):
                 idx_flat = np.random.choice(len(pi_flat), size=n_to_sample, p=pi_prob, replace=True)
                 idx0, idx1 = np.unravel_index(idx_flat, pi.shape)
 
+                # --- Extract source cell's niche (neighbors from the same slice) ---
+                nbr_idx = self.adata_list[k].uns['niche_neighbors'][idx0]       # (n_to_sample, K)
+                g_nbr = g0[nbr_idx]                                              # (n_to_sample, K, gene_dim)
+                c_nbr_raw = (
+                    self.adata_list[k].obs[self.label_key].astype(str).values[nbr_idx]
+                )
+                c_nbr = self.label_encoder.transform(c_nbr_raw.ravel()).reshape(
+                    n_to_sample, -1
+                ).astype(np.int64)                                                # (n_to_sample, K)
+                delta_nbr = self.adata_list[k].uns['niche_deltas'][idx0]         # (n_to_sample, K, 2)
+                dist_nbr = self.adata_list[k].uns['niche_dists'][idx0]           # (n_to_sample, K)
+                mask_nbr = self.adata_list[k].uns.get('niche_mask', np.ones((g0.shape[0], 32), dtype=bool))[idx0]  # (n_to_sample, K)
+
                 # Store trajectory endpoints
                 self.trajectory_pairs['x0'].append(x0[idx0])
                 self.trajectory_pairs['g0'].append(g0[idx0])
                 self.trajectory_pairs['c0'].append(c0[idx0])
                 self.trajectory_pairs['z0'].append(np.full((n_to_sample, 1), z0, dtype=np.float32))
+
+                # Store niche data
+                self.trajectory_pairs['g_nbr'].append(g_nbr)
+                self.trajectory_pairs['c_nbr'].append(c_nbr)
+                self.trajectory_pairs['delta_nbr'].append(delta_nbr)
+                self.trajectory_pairs['dist_nbr'].append(dist_nbr)
+                self.trajectory_pairs['mask_nbr'].append(mask_nbr)
                 
                 self.trajectory_pairs['x1'].append(x1[idx1])
                 self.trajectory_pairs['g1'].append(g1[idx1])
@@ -145,13 +171,17 @@ class DeepSpatialDataset(Dataset):
         self.tensors = {}
         for key in self.trajectory_pairs:
             if self.trajectory_pairs[key]:
-                # Use np.concatenate for efficiency before converting to tensor
                 concatenated = np.concatenate(self.trajectory_pairs[key], axis=0)
-                self.tensors[key] = torch.from_numpy(concatenated)
-            
+                if key in ('c_nbr',):
+                    self.tensors[key] = torch.from_numpy(concatenated).long()
+                elif key in ('mask_nbr',):
+                    self.tensors[key] = torch.from_numpy(concatenated).bool()
+                else:
+                    self.tensors[key] = torch.from_numpy(concatenated).float()
+
         self.trajectory_pairs.clear()
         gc.collect()
-        
+
         if 'x0' in self.tensors:
             self.num_samples = self.tensors['x0'].shape[0]
         else:

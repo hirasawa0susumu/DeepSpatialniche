@@ -96,35 +96,42 @@ class GiT(nn.Module):
     mlp_ratio : float, optional
         The expansion ratio for the MLP inside transformer blocks, by default 4.0.
     """
-    def __init__(self, gene_dim, patch_size, hidden_size, depth, num_heads, num_classes, mlp_ratio=4.0):
+    def __init__(self, gene_dim, patch_size, hidden_size, depth, num_heads, num_classes,
+                 mlp_ratio=4.0, niche_hidden_dim=0):
         super().__init__()
+        self.niche_hidden_dim = niche_hidden_dim
         self.patch_size = patch_size
-        # x is 2D, g is gene_dim
-        self.num_patches_x = 1 
+        self.num_patches_x = 1
+        self.num_patches_n = 1 if niche_hidden_dim > 0 else 0
         self.num_patches_g = math.ceil(gene_dim / patch_size)
-        self.num_patches = self.num_patches_x + self.num_patches_g
+        self.num_patches = self.num_patches_x + self.num_patches_n + self.num_patches_g
 
         # 1. Input Embedders
         self.x_embedder = nn.Linear(2, hidden_size)
+        self.n_embedder = (
+            nn.Linear(niche_hidden_dim, hidden_size)
+            if niche_hidden_dim > 0 else None
+        )
         self.g_embedder = PatchEmbedder(gene_dim, patch_size, hidden_size)
-        
-        # Condition Embedders
+
+        # 2. Condition Embedders (global only)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.z_embedder = TimestepEmbedder(hidden_size)
         self.c_embedder = nn.Linear(num_classes, hidden_size)
 
         # Positional Embedding
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, hidden_size), requires_grad=False)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, hidden_size),
+                                       requires_grad=False)
 
-        # 2. Transformer Backbone
+        # 3. Transformer Backbone
         self.blocks = nn.ModuleList([
             GiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
 
-        # 3. Output Heads
-        self.x_head = FinalLayer(hidden_size, 2, 1) # Spatial velocity
-        self.g_head = FinalLayer(hidden_size, patch_size, 1) # Gene velocity
-        self.c_head = nn.Linear(hidden_size, num_classes) # Cell type logits
+        # 4. Output Heads
+        self.x_head = FinalLayer(hidden_size, 2, 1)
+        self.g_head = FinalLayer(hidden_size, patch_size, 1)
+        self.c_head = nn.Linear(hidden_size, num_classes)
 
         self.initialize_weights()
 
@@ -156,7 +163,8 @@ class GiT(nn.Module):
         nn.init.constant_(self.g_head.linear.weight, 0)
         nn.init.constant_(self.g_head.linear.bias, 0)
 
-    def forward(self, xt, gt, t, zt, delta_z, ct):
+
+    def forward(self, xt, gt, t, zt, delta_z, ct, niche_token=None):
         """
         Forward pass computing the vector fields (velocity) for the given state.
 
@@ -171,17 +179,33 @@ class GiT(nn.Module):
         zt : torch.Tensor
             Physical Z-depth coordinates, shape `(Batch, 1)`.
         delta_z : torch.Tensor
-            The physical distance gap between the source and target slices, shape `(Batch, 1)`.
+            The physical distance gap between source and target slices, shape `(Batch, 1)`.
         ct : torch.Tensor
             One-hot encoded cell types, shape `(Batch, Num_Classes)`.
+        niche_token : torch.Tensor or None
+            Niche token, shape `(Batch, 1, niche_hidden_dim)`.
         """
-        # Embed modalities separately
         gene_dim = gt.shape[1]
-        x_feat = self.x_embedder(xt).unsqueeze(1) # [B, 1, D]
-        g_feat = self.g_embedder(gt) # [B, num_patches_g, D]
 
-        h = torch.cat([x_feat, g_feat], dim=1) + self.pos_embed
-        # Global conditioning
+        # --- input tokens ---
+        x_feat = self.x_embedder(xt).unsqueeze(1)                         # [B, 1, D]
+        g_feat = self.g_embedder(gt)                                       # [B, N_g, D]
+
+        if niche_token is not None and self.n_embedder is not None:
+            n_feat = self.n_embedder(niche_token)                          # [B, 1, D]
+            h = torch.cat([x_feat, n_feat, g_feat], dim=1) + self.pos_embed
+            g_start = 2
+        elif self.n_embedder is not None:
+            # Niche slot exists in pos_embed but no niche token (dropout) → zero placeholder
+            n_feat = torch.zeros(xt.shape[0], 1, self.pos_embed.shape[-1],
+                                 device=xt.device, dtype=xt.dtype)
+            h = torch.cat([x_feat, n_feat, g_feat], dim=1) + self.pos_embed
+            g_start = 2
+        else:
+            h = torch.cat([x_feat, g_feat], dim=1) + self.pos_embed
+            g_start = 1
+
+        # --- global conditioning (t, z, cell type only) ---
         cond = self.t_embedder(t.view(-1)) + \
                self.z_embedder(zt.view(-1)) + self.z_embedder(delta_z.view(-1)) + \
                self.c_embedder(ct)
@@ -189,9 +213,10 @@ class GiT(nn.Module):
         for block in self.blocks:
             h = block(h, cond)
 
-        # Project back to modality-specific outputs
-        x = self.x_head(h[:, :1, :], cond).squeeze(1) # [B, 2]
-        g = self.g_head(h[:, 1:, :], cond).reshape(xt.shape[0], -1)[:, :gene_dim] # [B, Gene_Dim]
-        c = self.c_head(h.mean(dim=1)) # [B, Classes]
+        # --- output heads ---
+        x = self.x_head(h[:, :1, :], cond).squeeze(1)                       # [B, 2]
+        g = self.g_head(h[:, g_start:, :], cond) \
+            .reshape(xt.shape[0], -1)[:, :gene_dim]                         # [B, G]
+        c = self.c_head(h.mean(dim=1))                                       # [B, C]
 
         return x, g, c

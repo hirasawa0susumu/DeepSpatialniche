@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.abspath('../../'))
 
 # -- Project information -----------------------------------------------------
-html_title = "DeepSpatial"
+html_title = "DeepSpatialniche"
 copyright = '2026, Yuhang Yang'
 author = 'Yuhang Yang'
 
