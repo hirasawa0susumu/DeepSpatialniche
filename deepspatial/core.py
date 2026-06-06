@@ -418,7 +418,6 @@ class DeepSpatial:
             target_cells, total_cells, dev, chunk_size,
             niche_ref_0, niche_ref_1, use_niche=use_niche,
         )
-        )
 
         # Assemble and restore to physical coordinates
         adata_segment = self._assemble_fast_anndata(adata0, adata1, mix_data)

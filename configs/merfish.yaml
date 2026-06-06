@@ -46,3 +46,4 @@ infer:
   steps: 100                   # ODE integration steps per slice gap
   chunk_size: 2048
   device: auto                 # auto | cuda | cpu
+  use_niche: true
