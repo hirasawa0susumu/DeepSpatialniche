@@ -2,9 +2,10 @@
 """DeepSpatialniche evaluation — tutorial visualizations + paper quantitative metrics.
 
 Metrics from the paper:
-  1. Patch-level cell-type cosine similarity (3D patches, GT vs recon)
-  2. Moran's I correlation (top HVGs, GT vs recon)
-  3. JS divergence, spatial continuity, label transfer, spatial correlation (supplementary)
+  1. Global cell-type proportion cosine similarity (GT vs recon)
+  2. Patch-level cell-type cosine similarity (3D patches, GT vs recon)
+  3. Moran's I correlation (top HVGs, GT vs recon)
+  4. JS divergence, spatial continuity, label transfer, spatial correlation (supplementary)
 
 Usage:
     python eval.py
@@ -23,6 +24,7 @@ import scanpy as sc
 import yaml
 from scipy.sparse import issparse
 from scipy.spatial import cKDTree
+from scipy.stats import spearmanr
 from sklearn.neighbors import NearestNeighbors
 
 from deepspatial.vis_utils import (
@@ -53,6 +55,29 @@ def _get_3d_coords(adata):
 def _to_dense(adata, gene):
     x = adata[:, gene].X
     return x.toarray().flatten() if issparse(x) else np.asarray(x).flatten()
+
+
+def _cell_type_vector(adata, label_key, all_types):
+    labels = adata.obs[label_key].astype(str)
+    return np.array([(labels == ct).mean() for ct in all_types], dtype=float)
+
+
+def _safe_cosine(p, q):
+    p_norm = np.linalg.norm(p)
+    q_norm = np.linalg.norm(q)
+    if p_norm == 0 and q_norm == 0:
+        return np.nan
+    if p_norm == 0 or q_norm == 0:
+        return 0.0
+    return float(np.dot(p, q) / (p_norm * q_norm))
+
+
+def _sanitize_expression_matrix(adata):
+    """Replace NaN/Inf values before HVG/variance calculations."""
+    if issparse(adata.X):
+        adata.X.data = np.nan_to_num(adata.X.data, nan=0.0, posinf=0.0, neginf=0.0)
+    else:
+        adata.X = np.nan_to_num(np.asarray(adata.X), nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def _make_palette(adata_recon, adata_gt, label_key):
@@ -89,7 +114,25 @@ def _normalize_coords(adata):
 # paper metrics
 # ---------------------------------------------------------------------------
 
-def patch_cell_type_cosine(adata_recon, adata_gt, label_key, patch_size=(50, 50, 30)):
+def cell_type_proportion_cosine(adata_recon, adata_gt, label_key):
+    """
+    Global cell-type proportion agreement.
+
+    The paper first checks that cell-type proportions are consistent between
+    ground-truth and reconstructed volumes before local patch evaluation.
+    """
+    all_types = sorted(set(adata_recon.obs[label_key].astype(str).unique())
+                       | set(adata_gt.obs[label_key].astype(str).unique()))
+    p = _cell_type_vector(adata_recon, label_key, all_types)
+    q = _cell_type_vector(adata_gt, label_key, all_types)
+    return _safe_cosine(p, q), pd.DataFrame({
+        "cell_type": all_types,
+        "reconstruction": p,
+        "ground_truth": q,
+    })
+
+
+def patch_cell_type_cosine(adata_recon, adata_gt, label_key, patch_size=(50, 50, 50), patch_scope="gt_occupied"):
     """
     Patch-level cell-type cosine similarity (paper Fig 2c-e).
 
@@ -108,42 +151,80 @@ def patch_cell_type_cosine(adata_recon, adata_gt, label_key, patch_size=(50, 50,
     labels_r = np.array([type_to_idx[t] for t in adata_recon.obs[label_key].astype(str)])
     labels_g = np.array([type_to_idx[t] for t in adata_gt.obs[label_key].astype(str)])
 
-    # Shared grid origin
-    origin = np.minimum(coords_r.min(axis=0), coords_g.min(axis=0))
-    dx, dy, dz = patch_size
+    # Determine fixed 50um voxels and cell membership in original physical space.
+    origin = coords_g.min(axis=0)
+    gt_max = coords_g.max(axis=0)
+    patch_size = np.asarray(patch_size, dtype=float)
+    extent = gt_max - origin
+    grid_shape = np.maximum(np.ceil((extent + 1e-8) / patch_size).astype(int), 1)
 
-    similarities = []
-    for coords, labels in [(coords_r, labels_r), (coords_g, labels_g)]:
-        # Bin each cell to a patch
-        ijk = np.floor((coords - origin) / patch_size).astype(int)
-        for cell_ijk, cell_label in zip(ijk, labels):
-            key = tuple(cell_ijk)
-            # Will fill later
-        break  # just getting unique keys...
-
-    # Actually let me use a dict-based approach
     patches_r = {}
     patches_g = {}
     for coords, labels, storage in [(coords_r, labels_r, patches_r),
                                      (coords_g, labels_g, patches_g)]:
         ijk = np.floor((coords - origin) / patch_size).astype(int)
+        in_grid = ((ijk >= 0) & (ijk < grid_shape)).all(axis=1)
+        ijk = ijk[in_grid]
+        labels = labels[in_grid]
         for cell_ijk, cell_label in zip(ijk, labels):
             key = tuple(cell_ijk)
             storage.setdefault(key, np.zeros(n_types))[cell_label] += 1
 
-    common_keys = set(patches_r) & set(patches_g)
-    if not common_keys:
+    if patch_scope == "gt_occupied":
+        occupied_keys = set(patches_g)
+    elif patch_scope == "common":
+        occupied_keys = set(patches_r) & set(patches_g)
+    elif patch_scope == "union":
+        occupied_keys = set(patches_r) | set(patches_g)
+    else:
+        raise ValueError("patch_scope must be one of: gt_occupied, common, union")
+    if not occupied_keys:
         return float("nan"), float("nan")
 
     cos_sims = []
-    for key in common_keys:
-        p = patches_r[key] + 1e-9
-        q = patches_g[key] + 1e-9
-        p, q = p / p.sum(), q / q.sum()
-        cos = np.dot(p, q) / (np.linalg.norm(p) * np.linalg.norm(q))
+    empty = np.zeros(n_types)
+    for key in occupied_keys:
+        p = patches_r.get(key, empty).astype(float)
+        q = patches_g.get(key, empty).astype(float)
+        if p.sum() > 0:
+            p = p / p.sum()
+        if q.sum() > 0:
+            q = q / q.sum()
+        cos = _safe_cosine(p, q)
+        if np.isnan(cos):
+            continue
         cos_sims.append(cos)
 
+    if not cos_sims:
+        return float("nan"), float("nan")
     return float(np.mean(cos_sims)), float(np.std(cos_sims))
+
+
+def _select_top_hvgs(adata_gt, common_genes, n_top_genes):
+    gt_sub = adata_gt[:, common_genes].copy()
+    _sanitize_expression_matrix(gt_sub)
+    try:
+        sc.pp.highly_variable_genes(
+            gt_sub,
+            n_top_genes=n_top_genes,
+            flavor="seurat",
+            inplace=True,
+        )
+        hvgs = gt_sub.var_names[gt_sub.var["highly_variable"]].tolist()
+        if len(hvgs) >= min(3, n_top_genes):
+            return hvgs[:n_top_genes]
+    except Exception as exc:
+        print(f"  (Scanpy HVG selection failed; falling back to variance: {exc})")
+
+    if issparse(gt_sub.X):
+        mean = np.asarray(gt_sub.X.mean(0)).ravel()
+        mean_sq = np.asarray(gt_sub.X.power(2).mean(0)).ravel()
+        var = mean_sq - np.square(mean)
+    else:
+        var = np.asarray(gt_sub.X).var(axis=0)
+    var = np.nan_to_num(var, nan=-np.inf, posinf=-np.inf, neginf=-np.inf)
+    top_idx = np.argsort(var)[-n_top_genes:]
+    return [common_genes[i] for i in top_idx]
 
 
 def morans_i_correlation(adata_recon, adata_gt, n_top_genes=100, n_neighbors=8):
@@ -155,18 +236,14 @@ def morans_i_correlation(adata_recon, adata_gt, n_top_genes=100, n_neighbors=8):
     3. Report Pearson R between the two Moran's I vectors.
     """
     # Find common genes
-    common_genes = list(set(adata_recon.var_names) & set(adata_gt.var_names))
+    common_genes = sorted(set(adata_recon.var_names) & set(adata_gt.var_names))
+    if not common_genes:
+        return float("nan"), [], None, None
     if len(common_genes) < n_top_genes:
         n_top_genes = len(common_genes)
 
     # Select top HVGs from GT
-    gt_sub = adata_gt[:, common_genes].copy()
-    if issparse(gt_sub.X):
-        var = np.array(gt_sub.X.power(2).mean(0) - np.square(gt_sub.X.mean(0))).flatten()
-    else:
-        var = gt_sub.X.var(axis=0)
-    top_idx = np.argsort(var)[-n_top_genes:]
-    top_genes = [common_genes[i] for i in top_idx]
+    top_genes = _select_top_hvgs(adata_gt, common_genes, n_top_genes)
 
     # Spatial weights: k-NN for each dataset
     coords_r = _get_3d_coords(adata_recon)
@@ -205,7 +282,7 @@ def morans_i_correlation(adata_recon, adata_gt, n_top_genes=100, n_neighbors=8):
     if valid.sum() < 3:
         return float("nan"), top_genes[:5], None, None
 
-    r = float(np.corrcoef(moran_gt[valid], moran_recon[valid])[0, 1])
+    r = float(spearmanr(moran_gt[valid], moran_recon[valid]).correlation)
     return r, top_genes, moran_gt, moran_recon
 
 
@@ -287,19 +364,36 @@ def spatial_label_transfer(adata_recon, adata_gt, label_key):
     return float((recon_labels == gt_labels[nn_idx]).mean())
 
 
-def spatial_expression_correlation(adata_recon, adata_gt, gene_name=None, n_samples=5000):
+def spatial_expression_correlation(adata_recon, adata_gt, gene_name=None, n_samples=5000, random_state=0):
     if gene_name is None:
-        common = list(set(adata_recon.var_names) & set(adata_gt.var_names))
+        common = sorted(set(adata_recon.var_names) & set(adata_gt.var_names))
         gene_name = common[0] if common else adata_recon.var_names[0]
     coords_r = _get_3d_coords(adata_recon)
     coords_g = _get_3d_coords(adata_gt)
-    idx_r = np.random.choice(len(adata_recon), min(n_samples, len(adata_recon)), replace=False)
+    rng = np.random.default_rng(random_state)
+    idx_r = rng.choice(len(adata_recon), min(n_samples, len(adata_recon)), replace=False)
     tree = cKDTree(coords_g)
     _, nn_idx = tree.query(coords_r[idx_r], k=1)
     expr_r, expr_g = _to_dense(adata_recon, gene_name), _to_dense(adata_gt, gene_name)
     expr_r, expr_g = expr_r[idx_r], expr_g[nn_idx]
     corr = float(np.corrcoef(expr_r, expr_g)[0, 1]) if expr_r.std() > 0 and expr_g.std() > 0 else 0.0
     return gene_name, corr
+
+
+def marker_gene_correlations(adata_recon, adata_gt, marker_genes, n_samples=5000):
+    rows = []
+    for gene in marker_genes:
+        if gene not in adata_recon.var_names or gene not in adata_gt.var_names:
+            continue
+        _, corr = spatial_expression_correlation(
+            adata_recon,
+            adata_gt,
+            gene_name=gene,
+            n_samples=n_samples,
+            random_state=0,
+        )
+        rows.append({"gene": gene, "spatial_expr_corr": corr})
+    return pd.DataFrame(rows)
 
 
 def _plot_patch_cosine(patch_cos_mean, patch_cos_std, output_dir):
@@ -358,6 +452,13 @@ def main():
     p.add_argument("--label_key", type=str, default=None)
     p.add_argument("--gene", type=str, default=None)
     p.add_argument("--z_range", type=float, nargs=2, default=None)
+    p.add_argument("--patch_size", type=float, nargs=3, default=None,
+                   help="3D patch size. Mouse brain paper setting: 50 50 50")
+    p.add_argument("--patch_scope", type=str, choices=["gt_occupied", "common", "union"], default=None,
+                   help="Voxel averaging scope for patch cosine")
+    p.add_argument("--moran_neighbors", type=int, default=None)
+    p.add_argument("--marker_genes", type=str, nargs="*", default=None,
+                   help="Marker genes to quantify. Mouse brain default: Gad1 Gad2 Slc17a7")
     p.add_argument("--no_plots", action="store_true", default=None)
     p.add_argument("--no_metrics", action="store_true", default=None,
                    help="Skip quantitative metrics (visualization only)")
@@ -377,6 +478,11 @@ def main():
     output_dir = _v(args.output_dir, ec.get("output_dir"), "./eval_results")
     label_key = _v(args.label_key, ec.get("label_key"), "cell_class")
     gene_name = _v(args.gene, ec.get("gene"), None)
+    z_range = _v(args.z_range, ec.get("z_range"), None)
+    patch_size = tuple(_v(args.patch_size, ec.get("patch_size"), (50, 50, 50)))
+    patch_scope = _v(args.patch_scope, ec.get("patch_scope"), "gt_occupied")
+    moran_neighbors = int(_v(args.moran_neighbors, ec.get("moran_neighbors"), 8))
+    marker_genes = _v(args.marker_genes, ec.get("marker_genes"), ["Gad1", "Gad2", "Slc17a7"])
     no_plots = _v(args.no_plots, ec.get("no_plots"), False)
     no_metrics = _v(args.no_metrics, ec.get("no_metrics"), False)
     os.makedirs(output_dir, exist_ok=True)
@@ -390,8 +496,8 @@ def main():
 
     # --- subset GT to reconstructed Z range (matches tutorial) ---
     z_gt = adata_gt_all.obsm["spatial"][:, 2].astype(float)
-    if args.z_range is not None:
-        z_min, z_max = args.z_range
+    if z_range is not None:
+        z_min, z_max = z_range
     else:
         z_min = adata_recon.obs["z_coord"].min() - 5
         z_max = adata_recon.obs["z_coord"].max() + 5
@@ -418,12 +524,17 @@ def main():
         print("\nComputing metrics...")
 
         # Paper metrics
+        print("  Global cell-type proportions ...")
+        prop_cos, prop_table = cell_type_proportion_cosine(adata_recon_vis, adata_gt, label_key)
+        prop_table.to_csv(os.path.join(output_dir, "cell_type_proportions.csv"), index=False)
+
         print("  Patch-level cell-type cosine similarity ...")
         patch_cos_mean, patch_cos_std = patch_cell_type_cosine(
-            adata_recon_vis, adata_gt, label_key, patch_size=(50, 50, 50))
+            adata_recon_vis, adata_gt, label_key, patch_size=patch_size, patch_scope=patch_scope)
 
         print("  Moran's I correlation (top 100 HVGs) ...")
-        moran_r, _, moran_gt, moran_recon = morans_i_correlation(adata_recon_vis, adata_gt, n_top_genes=100)
+        moran_r, _, moran_gt, moran_recon = morans_i_correlation(
+            adata_recon_vis, adata_gt, n_top_genes=100, n_neighbors=moran_neighbors)
 
         # Supplementary metrics
         per_bin, mean_js = cell_type_consistency(adata_recon_vis, adata_gt, label_key)
@@ -431,7 +542,11 @@ def main():
         cont_gt = spatial_continuity(adata_gt, label_key)
         label_match = spatial_label_transfer(adata_recon_vis, adata_gt, label_key)
         gene_used, expr_corr = spatial_expression_correlation(adata_recon_vis, adata_gt, gene_name)
+        marker_df = marker_gene_correlations(adata_recon_vis, adata_gt, marker_genes)
+        if not marker_df.empty:
+            marker_df.to_csv(os.path.join(output_dir, "marker_gene_correlations.csv"), index=False)
 
+        print(f"  Global cell-type proportion cosine: {prop_cos:.4f}  (1 = perfect)")
         print(f"  Patch cosine similarity:  {patch_cos_mean:.4f} ± {patch_cos_std:.4f}  (1 = perfect)")
         print(f"  Moran's I correlation:    {moran_r:.4f}  (1 = perfect)")
         print(f"  Mean JS divergence:       {mean_js:.4f}  (0 = identical)")
@@ -441,6 +556,7 @@ def main():
 
         metrics = pd.DataFrame({
             "metric": [
+                "cell_type_proportion_cosine",
                 "patch_cosine_similarity_mean", "patch_cosine_similarity_std",
                 "morans_i_correlation",
                 "mean_js_divergence",
@@ -449,10 +565,17 @@ def main():
                 f"spatial_expr_corr_{gene_used}",
             ],
             "value": [
+                prop_cos,
                 patch_cos_mean, patch_cos_std, moran_r, mean_js,
                 cont_recon, cont_gt, label_match, expr_corr,
             ],
         })
+        if not marker_df.empty:
+            marker_metrics = pd.DataFrame({
+                "metric": "marker_spatial_expr_corr_" + marker_df["gene"].astype(str),
+                "value": marker_df["spatial_expr_corr"].astype(float),
+            })
+            metrics = pd.concat([metrics, marker_metrics], ignore_index=True)
         metrics.to_csv(os.path.join(output_dir, "metrics.csv"), index=False)
 
     # --- plots (with normalized coordinates for fair visualization) ---
