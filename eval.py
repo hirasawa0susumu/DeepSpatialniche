@@ -134,12 +134,9 @@ def cell_type_proportion_cosine(adata_recon, adata_gt, label_key):
 
 def patch_cell_type_cosine(adata_recon, adata_gt, label_key, patch_size=(50, 50, 50), patch_scope="gt_occupied"):
     """
-    Patch-level cell-type cosine similarity (paper Fig 2c-e).
-
-    1. Grid 3D space into patches of shape `patch_size` (in physical units).
-    2. For each patch, build cell-type proportion vectors for GT and recon.
-    3. Compute cosine similarity per patch, return mean ± std.
+    Patch-level cell-type cosine similarity (GT-occupied evaluation only).
     """
+
     coords_r = _get_3d_coords(adata_recon)
     coords_g = _get_3d_coords(adata_gt)
 
@@ -151,7 +148,6 @@ def patch_cell_type_cosine(adata_recon, adata_gt, label_key, patch_size=(50, 50,
     labels_r = np.array([type_to_idx[t] for t in adata_recon.obs[label_key].astype(str)])
     labels_g = np.array([type_to_idx[t] for t in adata_gt.obs[label_key].astype(str)])
 
-    # Determine fixed 50um voxels and cell membership in original physical space.
     origin = coords_g.min(axis=0)
     gt_max = coords_g.max(axis=0)
     patch_size = np.asarray(patch_size, dtype=float)
@@ -160,45 +156,73 @@ def patch_cell_type_cosine(adata_recon, adata_gt, label_key, patch_size=(50, 50,
 
     patches_r = {}
     patches_g = {}
+
     for coords, labels, storage in [(coords_r, labels_r, patches_r),
                                      (coords_g, labels_g, patches_g)]:
+
         ijk = np.floor((coords - origin) / patch_size).astype(int)
         in_grid = ((ijk >= 0) & (ijk < grid_shape)).all(axis=1)
+
         ijk = ijk[in_grid]
         labels = labels[in_grid]
+
         for cell_ijk, cell_label in zip(ijk, labels):
             key = tuple(cell_ijk)
-            storage.setdefault(key, np.zeros(n_types))[cell_label] += 1
+            if key not in storage:
+                storage[key] = np.zeros(n_types, dtype=np.float32)
+            storage[key][cell_label] += 1
 
-    if patch_scope == "gt_occupied":
-        occupied_keys = set(patches_g)
-    elif patch_scope == "common":
-        occupied_keys = set(patches_r) & set(patches_g)
-    elif patch_scope == "union":
-        occupied_keys = set(patches_r) | set(patches_g)
-    else:
-        raise ValueError("patch_scope must be one of: gt_occupied, common, union")
-    if not occupied_keys:
+    # =========================
+    # GT-ONLY EVALUATION
+    # =========================
+    gt_keys = set(patches_g.keys())
+
+    if not gt_keys:
         return float("nan"), float("nan")
 
     cos_sims = []
-    empty = np.zeros(n_types)
-    for key in occupied_keys:
-        p = patches_r.get(key, empty).astype(float)
-        q = patches_g.get(key, empty).astype(float)
-        if p.sum() > 0:
-            p = p / p.sum()
-        if q.sum() > 0:
-            q = q / q.sum()
-        cos = _safe_cosine(p, q)
-        if np.isnan(cos):
+
+    for key in gt_keys:
+
+        gt_vec = patches_g.get(key)
+        pred_vec = patches_r.get(key)
+
+        gt_vec = np.zeros(n_types, dtype=np.float32) if gt_vec is None else gt_vec.astype(np.float32)
+        pred_vec = np.zeros(n_types, dtype=np.float32) if pred_vec is None else pred_vec.astype(np.float32)
+
+        gt_sum = gt_vec.sum()
+        pred_sum = pred_vec.sum()
+
+        # normalize to composition
+        if gt_sum > 0:
+            gt_vec = gt_vec / gt_sum
+        if pred_sum > 0:
+            pred_vec = pred_vec / pred_sum
+
+        # GT empty → skip (IMPORTANT)
+        if gt_sum == 0:
             continue
+
+        # recon empty → missing tissue penalty
+        if pred_sum == 0:
+            cos_sims.append(0.0)
+            continue
+
+        # both present → cosine
+        gt_norm = np.linalg.norm(gt_vec)
+        pred_norm = np.linalg.norm(pred_vec)
+
+        if gt_norm == 0 or pred_norm == 0:
+            cos = 0.0
+        else:
+            cos = float(np.dot(gt_vec, pred_vec) / (gt_norm * pred_norm))
+
         cos_sims.append(cos)
 
     if not cos_sims:
         return float("nan"), float("nan")
-    return float(np.mean(cos_sims)), float(np.std(cos_sims))
 
+    return float(np.mean(cos_sims)), float(np.std(cos_sims))
 
 def _select_top_hvgs(adata_gt, common_genes, n_top_genes):
     gt_sub = adata_gt[:, common_genes].copy()

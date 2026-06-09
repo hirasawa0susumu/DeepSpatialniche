@@ -1,7 +1,7 @@
-"""Graph attention pooling niche encoder.
+"""Multi-token niche encoder with learnable queries.
 
-Spatial KNN → joint neighbor encoding → attention-weighted sum → niche token.
-Can be called at any time t with any (g_center, pos_center).
+Spatial KNN → neighbor encoding → K learnable queries × cross-attention →
+K niche tokens.  Each learnable query probes a different microenvironment facet.
 """
 
 import numpy as np
@@ -49,89 +49,78 @@ def precompute_neighbors(adata_list, spatial_key='spatial_norm', K=32):
 # ---------------------------------------------------------------------------
 
 class NicheEncoder(nn.Module):
-    """Graph attention pooling: KNN → joint MLP → attention → weighted sum + residual.
+    """K learnable query vectors cross-attend over the KNN neighborhood.
 
-    Output: niche token (B, 1, hidden_dim), ready to concat into GiT token sequence.
+    Each query is a global parameter that learns to probe a specific
+    microenvironment aspect (e.g. immune, stromal, vascular).
     """
 
-    def __init__(self, gene_dim, hidden_dim=128, num_heads=4):
+    def __init__(self, gene_dim, hidden_dim=128, num_heads=4, num_tokens=4):
         super().__init__()
-        self.hidden_dim = hidden_dim
+        self.num_tokens = num_tokens
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads
 
-        # Neighbor joint encoding: [g_j, Δx, Δy, dist]
+        # Neighbor encoding: [g_j, dx, dy, dist, c_j]
         self.nbr_encoder = nn.Sequential(
             nn.Linear(gene_dim + 3, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
         )
 
-        # Center cell projection
-        self.center_proj = nn.Linear(gene_dim + 2, hidden_dim)
+        # K learnable query vectors (shared across all cells)
+        self.niche_queries = nn.Parameter(torch.zeros(num_tokens, hidden_dim))
 
-        # Multi-head attention
-        self.W_q = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        # K/V projections
         self.W_k = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.W_v = nn.Linear(hidden_dim, hidden_dim, bias=False)
-
-        # Output
-        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
-
-        # Residual
-        self.res_proj = nn.Sequential(
-            nn.Linear(gene_dim + 2, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
 
         self._init_weights()
 
     def _init_weights(self):
-        nn.init.zeros_(self.out_proj.weight)
-        nn.init.zeros_(self.out_proj.bias)
+        nn.init.trunc_normal_(self.niche_queries, std=0.02)
 
     def forward(self, g_center, pos_center, g_nbrs, delta_nbrs, dist_nbrs, mask_nbr=None):
         """
         Args:
-            g_center:   (B, G)         center cell gene expression (any t)
-            pos_center: (B, 2)         center cell position (any t)
-            g_nbrs:     (B, K, G)      neighbor gene expressions
-            delta_nbrs: (B, K, 2)      relative (Δx, Δy) from center
-            dist_nbrs:  (B, K)         Euclidean distances
-            mask_nbr:   (B, K) bool    True = valid neighbor
+            g_center:   (B, G)      center cell gene expression
+            pos_center: (B, 2)      center cell position
+            g_nbrs:     (B, N, G)   neighbor gene expressions
+            delta_nbrs: (B, N, 2)   relative (dx, dy) from center
+            dist_nbrs:  (B, N)      Euclidean distances
+            mask_nbr:   (B, N) bool True = valid neighbor
         Returns:
-            n_token:    (B, 1, D)      niche token
+            niche_tokens: (B, K, D) K niche tokens
         """
-        B, K, _ = g_nbrs.shape
-        D = self.hidden_dim
+        B, N, _ = g_nbrs.shape
+        K = self.num_tokens
         H = self.num_heads
         d = self.head_dim
 
         # --- neighbor encoding ---
-        nbr_feat = torch.cat([g_nbrs, delta_nbrs, dist_nbrs.unsqueeze(-1)], dim=-1)  # (B,K,G+3)
-        h_nbr = self.nbr_encoder(nbr_feat)                                            # (B,K,D)
+        nbr_feat = torch.cat([g_nbrs, delta_nbrs, dist_nbrs.unsqueeze(-1)], dim=-1)
+        h_nbr = self.nbr_encoder(nbr_feat)                                # (B, N, D)
 
-        # --- center query ---
-        c_feat = torch.cat([g_center, pos_center], dim=-1)                            # (B,G+2)
-        h_ctr = self.center_proj(c_feat)                                              # (B,D)
+        # --- K learnable queries ---
+        q = self.niche_queries.unsqueeze(0).expand(B, -1, -1)             # (B, K, D)
 
-        # --- multi-head attention ---
-        q = self.W_q(h_ctr).view(B, H, d)              # (B,H,d)
-        k = self.W_k(h_nbr).view(B, K, H, d)            # (B,K,H,d)
-        v = self.W_v(h_nbr).view(B, K, H, d)            # (B,K,H,d)
+        k = self.W_k(h_nbr)                                               # (B, N, D)
+        v = self.W_v(h_nbr)                                               # (B, N, D)
 
-        attn = torch.einsum('bhd,bkhd->bhk', q, k) * (d ** -0.5)  # (B,H,K)
+        # --- multi-head reshape ---
+        q = q.view(B, K, H, d)                                            # (B, K, H, d)
+        k = k.view(B, N, H, d)                                            # (B, N, H, d)
+        v = v.view(B, N, H, d)
+
+        # --- cross-attention ---
+        attn = torch.einsum('bkhd,bnhd->bhkn', q, k) * (d ** -0.5)        # (B, H, K, N)
 
         if mask_nbr is not None:
-            attn = attn.masked_fill(~mask_nbr.unsqueeze(1), float('-inf'))
+            attn = attn.masked_fill(~mask_nbr[:, None, None, :], float('-inf'))
 
-        attn = attn.softmax(dim=-1)                                            # (B,H,K)
+        attn = attn.softmax(dim=-1)                                       # (B, H, K, N)
 
-        n_pooled = torch.einsum('bhk,bkhd->bhd', attn, v)                     # (B,H,d)
-        n_pooled = n_pooled.reshape(B, D)                                      # (B,D)
+        n_tokens = torch.einsum('bhkn,bnhd->bkhd', attn, v)              # (B, K, H, d)
+        n_tokens = n_tokens.reshape(B, K, -1)                            # (B, K, D)
 
-        # --- residual ---
-        n_token = self.res_proj(c_feat) + self.out_proj(n_pooled)              # (B,D)
-
-        return n_token.unsqueeze(1)  # (B,1,D) — ready to concat
+        return n_tokens
