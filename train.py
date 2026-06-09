@@ -112,6 +112,7 @@ def main():
     p.add_argument("--use_niche_encoder", type=lambda x: x.lower() == "true", default=None)
     p.add_argument("--niche_hidden_dim", type=int, default=None)
     p.add_argument("--niche_num_heads", type=int, default=None)
+    p.add_argument("--niche_num_tokens", type=int, default=None)
 
     # train
     p.add_argument("--lr", type=float, default=None)
@@ -194,6 +195,7 @@ def main():
         use_niche_encoder=_v(args.use_niche_encoder, mc.get("use_niche_encoder"), True),
         niche_hidden_dim=_v(args.niche_hidden_dim, mc.get("niche_hidden_dim"), 128),
         niche_num_heads=_v(args.niche_num_heads, mc.get("niche_num_heads"), 4),
+        niche_num_tokens=_v(args.niche_num_tokens, mc.get("niche_num_tokens"), 4),
         niche_dropout=_v(None, mc.get("niche_dropout"), 0.3),
     )
     print(f"Parameters: {sum(p.numel() for p in model.module.parameters()):,}")

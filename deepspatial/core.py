@@ -164,6 +164,7 @@ class DeepSpatial:
                     use_niche_encoder: bool = True,
                     niche_hidden_dim: int = 128,
                     niche_num_heads: int = 4,
+                    niche_num_tokens: int = 4,
                     niche_dropout: float = 0.3):
         """
         Instantiates the GiT network architecture and Flow Matching logic.
@@ -185,7 +186,8 @@ class DeepSpatial:
             use_niche_encoder: Whether to enable the niche encoder.
             niche_hidden_dim: Niche encoder hidden dimension.
             niche_num_heads: Niche encoder attention heads.
-            niche_dropout: Probability of dropping niche token during training.
+            niche_num_tokens: Number of learnable niche query tokens.
+            niche_dropout: Probability of dropping niche tokens during training.
         """
         if self.gene_dim is None or self.num_classes is None:
             raise ValueError("Dimensions unknown. Call `setup_data()` first.")
@@ -202,6 +204,7 @@ class DeepSpatial:
             "use_niche_encoder": use_niche_encoder,
             "niche_hidden_dim": niche_hidden_dim,
             "niche_num_heads": niche_num_heads,
+            "niche_num_tokens": niche_num_tokens,
         }
 
         self.train_config = {
@@ -221,10 +224,12 @@ class DeepSpatial:
         }
 
         model_niche_dim = niche_hidden_dim if use_niche_encoder else 0
+        model_niche_ntokens = niche_num_tokens if use_niche_encoder else 0
         self.model = GiT(
             gene_dim=self.gene_dim,
             num_classes=self.num_classes,
             niche_hidden_dim=model_niche_dim,
+            niche_num_tokens=model_niche_ntokens,
             **self.model_config
         )
 
@@ -233,6 +238,7 @@ class DeepSpatial:
                 gene_dim=self.gene_dim,
                 hidden_dim=niche_hidden_dim,
                 num_heads=niche_num_heads,
+                num_tokens=niche_num_tokens,
             )
         else:
             self.niche_encoder = None
@@ -578,14 +584,14 @@ class DeepSpatial:
                     'delta_z': torch.full((len(chunk_parents), 1), z_end - z_start, device=dev)
                 }
 
-                # Compute niche token for parent cells
+                # Compute niche tokens for parent cells
                 if has_niche:
                     nref = niche_ref_0 if is_forward else niche_ref_1
                     nbr_idx = nref['neighbors'][chunk_parents]              # (chunk, K)
                     g_nbr = g_ref[nbr_idx]                                   # (chunk, K, gene_dim)
                     delta_nbr = nref['deltas'][chunk_parents]               # (chunk, K, 2)
                     dist_nbr = nref['dists'][chunk_parents]                 # (chunk, K)
-                    batch['niche_token'] = _niche_enc(
+                    batch['niche_tokens'] = _niche_enc(
                         g_center=g_ref[chunk_parents],
                         pos_center=x_ref[chunk_parents],
                         g_nbrs=g_nbr,

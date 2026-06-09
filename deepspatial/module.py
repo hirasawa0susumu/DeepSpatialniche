@@ -85,14 +85,14 @@ class DeepSpatialModule(pl.LightningModule):
         _, ct, uc_t = self.transport.path_sampler.plan(t, c0, c1)
         _, zt, _ = self.transport.path_sampler.plan(t, z0, z1)
 
-        # Niche token: fixed source-slice microenvironment (consistent with inference)
-        niche_token = None
+        # Niche tokens: fixed source-slice microenvironment (consistent with inference)
+        niche_tokens = None
         if self.niche_encoder is not None and 'g_nbr' in batch:
             niche_dropout = self.hparams.get('niche_dropout', 0.3)
             if self.training and torch.rand(1).item() < niche_dropout:
-                niche_token = None
+                niche_tokens = None
             else:
-                niche_token = self.niche_encoder(
+                niche_tokens = self.niche_encoder(
                     g_center=g0,
                     pos_center=x0,
                     g_nbrs=batch['g_nbr'],
@@ -101,10 +101,10 @@ class DeepSpatialModule(pl.LightningModule):
                     mask_nbr=batch.get('mask_nbr'),
                 )
 
-        # 3. Predict velocity fields
+        # Predict velocity fields
         vx_pred, vg_pred, vc_pred = self.model(
             xt=xt, gt=gt, t=t, zt=zt, delta_z=delta_z, ct=ct,
-            niche_token=niche_token,
+            niche_tokens=niche_tokens,
         )
 
         # Compute losses (Mean Squared Error on velocity)
@@ -204,7 +204,7 @@ class DeepSpatialModule(pl.LightningModule):
         x0, g0, c0 = batch['x0'], batch['g0'], batch['c0']
         x_dim, g_dim = x0.shape[-1], g0.shape[-1]
         z0, z1, delta_z = batch['z0'], batch['z1'], batch['delta_z']
-        niche_token = batch.get('niche_token', None)  # pre-computed niche token
+        niche_tokens = batch.get('niche_tokens', None)  # pre-computed niche tokens
 
         # Concatenate for joint integration
         init_state = torch.cat([x0, g0, c0], dim=-1)
@@ -229,7 +229,7 @@ class DeepSpatialModule(pl.LightningModule):
             # Forward pass through EMA model
             vx, vg, vc = self.ema_model(
                 xt=xt, gt=gt, t=t_tensor, zt=zt, delta_z=delta_z, ct=ct,
-                niche_token=niche_token,
+                niche_tokens=niche_tokens,
             )
             return torch.cat([vx, vg, vc], dim=-1)
 

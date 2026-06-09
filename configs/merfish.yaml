@@ -24,6 +24,7 @@ model:
   use_niche_encoder: true
   niche_hidden_dim: 128
   niche_num_heads: 4
+  niche_num_tokens: 4
   niche_dropout: 0.3
 
 train:

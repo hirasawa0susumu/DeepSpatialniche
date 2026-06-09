@@ -45,6 +45,7 @@ model:
   use_niche_encoder: false               # tutorial did not use niche encoder
   niche_hidden_dim: 128                   # niche token dimension
   niche_num_heads: 4                      # attention heads in niche encoder
+  niche_num_tokens: 4                     # number of learnable niche query tokens
   niche_dropout: 0.3                      # randomly drop niche during training (anti-shortcut)
 
 # ---------------------------------------------------------------------------
