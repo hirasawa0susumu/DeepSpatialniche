@@ -1,3 +1,11 @@
+"""Patch-level cell-type cosine similarity (paper Fig 2c-e).
+
+Patch extraction with raw physical coordinates (no normalization).
+Matches the paper description:
+  "divided each 3D volume into local patches (50 x 50 x 50 for mouse brain)
+   and computed the cosine similarity of cell-type distributions within each patch."
+"""
+
 import numpy as np
 import anndata as ad
 
@@ -15,14 +23,7 @@ def get_3d_coords(adata, is_gt=False):
 
 
 # =========================
-# 2. coordinate normalization (CRITICAL FIX)
-# =========================
-def normalize_coords(coords, min_, max_):
-    return (coords - min_) / (max_ - min_ + 1e-8)
-
-
-# =========================
-# 3. label encoding
+# 2. label encoding
 # =========================
 def encode_labels(labels_r, labels_g):
     all_types = sorted(set(labels_r) | set(labels_g))
@@ -31,76 +32,56 @@ def encode_labels(labels_r, labels_g):
 
 
 # =========================
-# 4. cosine
+# 3. patch assignment (raw physical coords)
 # =========================
-def cosine(a, b):
-    na = np.linalg.norm(a)
-    nb = np.linalg.norm(b)
-    if na == 0 or nb == 0:
-        return np.nan
-    return float(np.dot(a, b) / (na * nb))
+def assign_patch(coords, origin, patch_size):
+    return np.floor((coords - origin) / patch_size).astype(int)
 
 
 # =========================
-# 5. patch assignment
+# 4. patch composition
 # =========================
-def assign_patch(coords, patch_size):
-    return np.floor(coords / patch_size).astype(int)
-
-
-# =========================
-# 6. patch composition
-# =========================
-def build_patch_composition(coords, labels, patch_idx, grid_shape, n_types):
+def build_patch_composition(patch_idx, labels, grid_shape, n_types):
     P = np.zeros((*grid_shape, n_types), dtype=np.float32)
 
     for (i, j, k), l in zip(patch_idx, labels):
-        P[i, j, k, l] += 1
+        if 0 <= i < grid_shape[0] and 0 <= j < grid_shape[1] and 0 <= k < grid_shape[2]:
+            P[i, j, k, l] += 1
 
     P = P.reshape(-1, n_types)
     s = P.sum(axis=1, keepdims=True)
-
     P = np.divide(P, s, out=np.zeros_like(P), where=s > 0)
 
     return P
 
 
 # =========================
-# 7. patch cosine metric
+# 5. patch cosine metric
 # =========================
 def patch_cosine_score(P_gt, P_pred):
+    """Only evaluate patches where GT has cells (per paper).
+    GT-empty patches are ignored; pred-empty patches get score=0."""
     scores = []
-
     for a, b in zip(P_gt, P_pred):
         na = np.linalg.norm(a)
         nb = np.linalg.norm(b)
 
-        # =========================
-        # CASE 1: both empty → ignore
-        # =========================
         if na == 0 and nb == 0:
-            continue
-
-        # =========================
-        # CASE 2: one empty → score = 0
-        # =========================
-        if na != 0 and nb == 0:
-            scores.append(0.0)
-            continue
-
+            continue          # both empty → skip
         if na == 0 and nb != 0:
+            scores.append(0.0)
+            continue          # GT empty, pred hallucinated → skip
+        if na != 0 and nb == 0:
+            # scores.append(0.0)  # GT occupied, pred empty → score 0
             continue
 
-        # =========================
-        # CASE 3: both non-empty → cosine
-        # =========================
         scores.append(float(np.dot(a, b) / (na * nb)))
 
     return float(np.mean(scores)) if len(scores) > 0 else 0.0
 
 
 # =========================
-# 8. MAIN PIPELINE (PAPER FINAL)
+# 6. MAIN PIPELINE
 # =========================
 def patch_level_evaluation(
     adata_recon,
@@ -108,25 +89,15 @@ def patch_level_evaluation(
     label_key,
     patch_size=(50, 50, 50)
 ):
-    # -------- coords --------
+    # -------- coords (raw physical, no normalization) --------
     coords_r = get_3d_coords(adata_recon, is_gt=False)
     coords_g = get_3d_coords(adata_gt, is_gt=True)
 
-    # =========================
-    # ✔ GLOBAL MIN-MAX NORMALIZATION (KEY FIX)
-    # =========================
-    all_coords = np.vstack([coords_r, coords_g])
-
-    c_min = all_coords.min(axis=0)
-    c_max = all_coords.max(axis=0)
-
-    coords_r = normalize_coords(coords_r, c_min, c_max)
-    coords_g = normalize_coords(coords_g, c_min, c_max)
+    # Shared origin = GT minimum
+    origin = coords_g.min(axis=0).astype(np.float32)
+    patch_size = np.array(patch_size, dtype=np.float32)
 
     # -------- labels --------
-    mask_r = np.ones(len(coords_r), dtype=bool)
-    mask_g = np.ones(len(coords_g), dtype=bool)
-
     labels_r_raw = adata_recon.obs[label_key].astype(str).values
     labels_g_raw = adata_gt.obs[label_key].astype(str).values
 
@@ -135,38 +106,60 @@ def patch_level_evaluation(
     labels_r = np.array([label_to_idx[t] for t in labels_r_raw])
     labels_g = np.array([label_to_idx[t] for t in labels_g_raw])
 
-    # =========================
-    # patch size in normalized space
-    # =========================
-    patch_size = np.array(patch_size, dtype=np.float32) / 50.0  # scale-aware
-
     # -------- patch indexing --------
-    patch_r = assign_patch(coords_r, patch_size)
-    patch_g = assign_patch(coords_g, patch_size)
+    patch_r = assign_patch(coords_r, origin, patch_size)
+    patch_g = assign_patch(coords_g, origin, patch_size)
 
-    # -------- grid shape --------
+    # Grid shape covers both GT and recon
     all_patch = np.vstack([patch_r, patch_g])
     grid_shape = all_patch.max(axis=0) + 1
 
     # -------- build composition --------
-    P_r = build_patch_composition(coords_r, labels_r, patch_r, grid_shape, n_types)
-    P_g = build_patch_composition(coords_g, labels_g, patch_g, grid_shape, n_types)
+    P_r = build_patch_composition(patch_r, labels_r, grid_shape, n_types)
+    P_g = build_patch_composition(patch_g, labels_g, grid_shape, n_types)
 
     # -------- final metric --------
     return patch_cosine_score(P_g, P_r)
 
 
 # =========================
-# 9. RUN
+# 7. RUN
 # =========================
-adata_recon = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_01drop/mouse_starmap_reconstructed_3d.h5ad")
-adata_gt = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad")
+if __name__ == "__main__":
+    adata_recon_csa = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn.h5ad")
+    adata_recon_atp = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain.h5ad")
+    adata_recon2_noni = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_noniche.h5ad")
+    adata_recon_noni1 = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn_noniche_new.h5ad"
+    )
+    adata_dsgt = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_starmap_brain.h5ad")
+    adata_recon_csa03drop = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn_03drop.h5ad"
+    )
+    adata_gt = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad")
 
-score = patch_level_evaluation(
-    adata_recon,
-    adata_gt,
-    label_key="Harmony_labels",
-    patch_size=(50, 50, 50)
-)
+    print("Computing patch-level cosine similarity (patch_size=50x50x50 μm, raw coords)...")
+    print()
 
-print("Patch-level cosine similarity (normalized):", score)
+    score = patch_level_evaluation(
+        adata_recon_csa, adata_gt, label_key="Harmony_labels")
+    score1 = patch_level_evaluation(
+        adata_recon_noni1, adata_gt, label_key="Harmony_labels")
+    score2 = patch_level_evaluation(
+        adata_recon2_noni, adata_gt, label_key="Harmony_labels")
+    score3 = patch_level_evaluation(
+        adata_dsgt, adata_gt, label_key="Harmony_labels")
+    score4 = patch_level_evaluation(
+        adata_recon_csa03drop, adata_gt, label_key="Harmony_labels"
+    )
+
+    print(f"Patch cosine (crossattn):  {score:.4f}")
+    print(f"Patch level cosine (crossattn03drop):  {score4:.4f}")
+    print(f"Patch cosine (noninew):   {score1:.4f}")
+    print(f"Patch cosine (noniche):    {score2:.4f}")
+    print(f"Patch cosine (dsgt):       {score3:.4f}")

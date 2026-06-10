@@ -38,6 +38,7 @@ train:
   save_dir: ./checkpoints
   save_ckpt: true
   resume_ckpt_path: null
+  seed: 42
 
 infer:
   sampling_method: dopri5      # dopri5 | euler

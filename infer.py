@@ -15,11 +15,13 @@ import argparse
 import glob
 import json
 import os
+import random
 import sys
 from pathlib import Path
 
 import numpy as np
 import scanpy as sc
+import torch
 import yaml
 
 import deepspatial as ds
@@ -107,6 +109,7 @@ def main():
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--use_niche", type=lambda x: x.lower() == "true", default=None,
                    help="Whether to use niche encoder (default True). Set false for ablation.")
+    p.add_argument("--seed", type=int, default=None)
 
     args = p.parse_args()
 
@@ -115,6 +118,14 @@ def main():
     cfg = yaml.safe_load(open(yaml_path)) if os.path.exists(yaml_path) else {}
     dc = cfg.get("data", {})
     ic = cfg.get("infer", {})
+
+    # --- seed ---
+    seed = _v(args.seed, ic.get("seed"), 42)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     # --- load data ---
     true_3d = _v(args.true_3d, dc.get("true_3d"), False)
@@ -180,6 +191,7 @@ def main():
         steps=_v(args.steps, ic.get("steps"), 100),
         chunk_size=_v(args.chunk_size, ic.get("chunk_size"), 2048),
         use_niche=_v(args.use_niche, ic.get("use_niche"), True),
+        seed=seed,
         device=_v(args.device, ic.get("device"), "auto"),
     )
 

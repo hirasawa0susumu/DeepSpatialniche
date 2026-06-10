@@ -161,6 +161,7 @@ class GiT(nn.Module):
             h = torch.cat([n_feat, x_feat, g_feat], dim=1) + self.pos_embed
         else:
             h = torch.cat([x_feat, g_feat], dim=1) + self.pos_embed
+            print("correct")
 
         g_start = K + 1  # gene tokens start after niche tokens + x token
 

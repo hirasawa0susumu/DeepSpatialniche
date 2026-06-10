@@ -90,17 +90,18 @@ class DeepSpatial:
             adata.obsm['spatial_norm'] = coords
             adata.obs['z_norm'] = norm_z_arr[i]
 
-    def setup_data(self, 
-                   adata_list: list[ad.AnnData], 
+    def setup_data(self,
+                   adata_list: list[ad.AnnData],
                    spatial_key: str = 'spatial',
                    z_key: str = 'z_coord',
                    label_key: str = 'cell_class',
-                   batch_size: int = 128, 
+                   batch_size: int = 128,
                    num_workers: int = 4,
                    n_samples_base: int = 50000,
                    alpha_spatial: float = 0.5,
                    uot_reg: float = 0.8,
                    uot_tau: float = 0.05,
+                   seed: int = 42,
                    mode: str = 'fit'):
         """
         Prepares the data pipeline and calculates physical normalization statistics.
@@ -125,21 +126,23 @@ class DeepSpatial:
         self._normalize_spatial(adata_list)
         
         self.dataset = DeepSpatialDataset(
-            adata_list=adata_list, 
-            spatial_key='spatial_norm', 
+            adata_list=adata_list,
+            spatial_key='spatial_norm',
             z_key='z_norm',
             label_key=label_key,
             n_samples_base=n_samples_base,
             alpha_spatial=alpha_spatial,
             uot_reg=uot_reg,
             uot_tau=uot_tau,
-            mode=mode
+            mode=mode,
+            seed=seed,
         )
 
-        self.categories = pd.Index(self.dataset.label_encoder.classes_) 
+        self.categories = pd.Index(self.dataset.label_encoder.classes_)
         self.train_loader = DataLoader(
-            self.dataset, batch_size=batch_size, 
-            shuffle=True, num_workers=num_workers
+            self.dataset, batch_size=batch_size,
+            shuffle=True, num_workers=num_workers,
+            generator=torch.Generator().manual_seed(seed),
         )
 
         # Infer dimensions from the first batch
@@ -384,6 +387,7 @@ class DeepSpatial:
                                    steps: int = 20,
                                    chunk_size: int = 2048,
                                    use_niche: bool = True,
+                                   seed: int = 42,
                                    device: str = "auto") -> ad.AnnData:
         """
         Generates a 3D volume segment between two specific AnnData slices.
@@ -423,6 +427,7 @@ class DeepSpatial:
             x0, g0, c0, x1, g1, c1, z0, z1, steps,
             target_cells, total_cells, dev, chunk_size,
             niche_ref_0, niche_ref_1, use_niche=use_niche,
+            seed=seed,
         )
 
         # Assemble and restore to physical coordinates
@@ -436,6 +441,7 @@ class DeepSpatial:
                                 steps: int = 100,
                                 chunk_size: int = 2048,
                                 use_niche: bool = True,
+                                seed: int = 42,
                                 device: str = "auto") -> ad.AnnData:
         """
         High-level API to reconstruct the entire 3D volume from a list of slices.
@@ -478,6 +484,7 @@ class DeepSpatial:
                 thickness=thickness,
                 chunk_size=chunk_size,
                 use_niche=use_niche,
+                seed=seed + i,
                 device=device,
             )
             
@@ -534,19 +541,19 @@ class DeepSpatial:
     def _generate_and_prune_optimized(self, x0, g0, c0, x1, g1, c1, z0, z1, steps,
                                        target_cells, total_cells, dev, chunk_size,
                                        niche_ref_0=None, niche_ref_1=None,
-                                       use_niche: bool = True):
+                                       use_niche: bool = True, seed: int = 42):
         """Memory-efficient ODE integration and spatial density pruning."""
         N0, N1 = float(x0.shape[0]), float(x1.shape[0])
         has_niche = (use_niche and self.niche_encoder is not None and
                      niche_ref_0 is not None and niche_ref_1 is not None)
-        # Use EMA niche encoder for inference if available
         _niche_enc = (
             self.module.ema_niche_encoder
             if getattr(self.module, 'ema_niche_encoder', None) is not None
             else self.niche_encoder
         )
-        u = torch.rand(total_cells, device=dev)
-        
+        gen = torch.Generator(device=dev).manual_seed(seed)
+        u = torch.rand(total_cells, device=dev, generator=gen)
+
         # Inverse transform sampling for time distribution
         if abs(N0 - N1) < 1e-5:
             t_vals = u
@@ -554,11 +561,11 @@ class DeepSpatial:
             t_vals = (-N0 + torch.sqrt(N0**2 * (1 - u) + N1**2 * u)) / (N1 - N0)
 
         target_zs = t_vals * (z1 - z0) + z0
-        is_fwd = torch.rand(total_cells, device=dev) > t_vals
+        is_fwd = torch.rand(total_cells, device=dev, generator=gen) > t_vals
         fwd_ids, bwd_ids = torch.where(is_fwd)[0], torch.where(~is_fwd)[0]
 
-        src_fwd = torch.randint(0, x0.shape[0], (len(fwd_ids),), device=dev)
-        src_bwd = torch.randint(0, x1.shape[0], (len(bwd_ids),), device=dev)
+        src_fwd = torch.randint(0, x0.shape[0], (len(fwd_ids),), device=dev, generator=gen)
+        src_bwd = torch.randint(0, x1.shape[0], (len(bwd_ids),), device=dev, generator=gen)
 
         final_x = torch.zeros((total_cells, 2), device=dev)
         final_g = torch.zeros((total_cells, g0.shape[1]), device=dev)

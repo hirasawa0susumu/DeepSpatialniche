@@ -51,6 +51,7 @@ train:
   save_dir: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_05drop/
   save_ckpt: true
   resume_ckpt_path: null
+  seed: 42
 
 infer:
   checkpoint: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_08drop/deepspatial-epoch=09-loss=0.1579.ckpt      # path to .ckpt file (required)
@@ -65,9 +66,9 @@ infer:
   use_niche: true
 
 eval:
-  recon: /root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/mouse_starmap_new/mouse_starmap_reconstructed_3d.h5ad                 # path to reconstructed 3D h5ad (required)
+  recon: /root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn_03drop.h5ad                # path to reconstructed 3D h5ad (required)
   ground_truth: /root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad            # path to ground truth 3D h5ad (required)
-  output_dir: ./DeepSpatialniche/eval_results_new
+  output_dir: ./DeepSpatialniche/eval_results_cross_attn
   label_key: Harmony_labels           # cell type column in adata.obs
   gene: null                    # gene for spatial correlation (auto-pick if null)
   z_range: null                 # [min, max] Z range for GT subset (auto if null)

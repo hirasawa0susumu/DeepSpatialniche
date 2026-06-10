@@ -14,11 +14,13 @@ Usage:
 import argparse
 import glob
 import os
+import random
 import sys
 from pathlib import Path
 
 import numpy as np
 import scanpy as sc
+import torch
 import yaml
 
 import deepspatial as ds
@@ -125,6 +127,7 @@ def main():
     p.add_argument("--save_dir", type=str, default=None)
     p.add_argument("--save_ckpt", type=lambda x: x.lower() == "true", default=None)
     p.add_argument("--resume_ckpt_path", type=str, default=None)
+    p.add_argument("--seed", type=int, default=None)
 
     args = p.parse_args()
 
@@ -134,6 +137,14 @@ def main():
     dc = cfg.get("data", {})
     mc = cfg.get("model", {})
     tc = cfg.get("train", {})
+
+    # --- seed ---
+    seed = _v(args.seed, tc.get("seed"), 42)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     # --- load data ---
     true_3d = _v(args.true_3d, dc.get("true_3d"), False)
@@ -177,6 +188,7 @@ def main():
         alpha_spatial=_v(args.alpha_spatial, dc.get("alpha_spatial"), 0.5),
         uot_reg=_v(args.uot_reg, dc.get("uot_reg"), 0.8),
         uot_tau=_v(args.uot_tau, dc.get("uot_tau"), 0.05),
+        seed=seed,
     )
     print(f"Gene dim: {model.gene_dim}  Classes: {model.num_classes}")
 

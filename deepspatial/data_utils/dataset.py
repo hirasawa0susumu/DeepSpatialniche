@@ -15,15 +15,16 @@ class DeepSpatialDataset(Dataset):
     Constructs cross-slice cell pairs using Unbalanced Optimal Transport (UOT) 
     to provide continuous training samples for Flow Matching.
     """
-    def __init__(self, 
-                 adata_list: list, 
-                 spatial_key: str = 'spatial_norm', 
+    def __init__(self,
+                 adata_list: list,
+                 spatial_key: str = 'spatial_norm',
                  z_key: str = 'z_norm',
                  label_key: str = 'cell_class',
-                 n_samples_base: int = 50000, 
+                 n_samples_base: int = 50000,
                  alpha_spatial: float = 0.5,
-                 uot_reg: float = 0.8, 
+                 uot_reg: float = 0.8,
                  uot_tau: float = 0.05,
+                 seed: int = 42,
                  mode: str = 'fit'):
         """
         Args:
@@ -35,6 +36,7 @@ class DeepSpatialDataset(Dataset):
             alpha_spatial: Balance between spatial and gene distances for UOT.
             uot_reg: Entropy regularization for UOT solver.
             uot_tau: Marginal relaxation for UOT solver.
+            seed: Random seed for UOT sampling.
             mode: 'fit' for full multi-slice training, 'predict' for limited slice pairs.
         """
         self.adata_list = adata_list
@@ -45,6 +47,7 @@ class DeepSpatialDataset(Dataset):
         self.alpha_spatial = alpha_spatial
         self.uot_reg = uot_reg
         self.uot_tau = uot_tau
+        self.seed = seed
 
         # --- 1. Global Label Encoding ---
         self.label_encoder = LabelEncoder()
@@ -128,7 +131,8 @@ class DeepSpatialDataset(Dataset):
             
             if pi_sum > 0:
                 pi_prob = pi_flat / pi_sum
-                idx_flat = np.random.choice(len(pi_flat), size=n_to_sample, p=pi_prob, replace=True)
+                rng = np.random.default_rng(self.seed + k)  # per-slice-pair seed
+                idx_flat = rng.choice(len(pi_flat), size=n_to_sample, p=pi_prob, replace=True)
                 idx0, idx1 = np.unravel_index(idx_flat, pi.shape)
 
                 # --- Extract source cell's niche (neighbors from the same slice) ---
