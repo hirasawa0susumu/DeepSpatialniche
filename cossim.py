@@ -58,7 +58,7 @@ def build_patch_composition(patch_idx, labels, grid_shape, n_types):
 # =========================
 # 5. patch cosine metric
 # =========================
-def patch_cosine_score(P_gt, P_pred):
+def patch_cosine_score(P_pred, P_gt):
     """Only evaluate patches where GT has cells (per paper).
     GT-empty patches are ignored; pred-empty patches get score=0."""
     scores = []
@@ -70,7 +70,7 @@ def patch_cosine_score(P_gt, P_pred):
             continue          # both empty → skip
         if na == 0 and nb != 0:
             scores.append(0.0)
-            continue          # GT empty, pred hallucinated → skip
+            continue          #     GT empty, pred hallucinated → skip
         if na != 0 and nb == 0:
             # scores.append(0.0)  # GT occupied, pred empty → score 0
             continue
@@ -87,11 +87,13 @@ def patch_level_evaluation(
     adata_recon,
     adata_gt,
     label_key,
-    patch_size=(50, 50, 50)
+    patch_size=(50, 50, 50),
+    isgt1 = False,
+    isgt2 = False
 ):
     # -------- coords (raw physical, no normalization) --------
-    coords_r = get_3d_coords(adata_recon, is_gt=False)
-    coords_g = get_3d_coords(adata_gt, is_gt=True)
+    coords_r = get_3d_coords(adata_recon, is_gt=isgt1)
+    coords_g = get_3d_coords(adata_gt, is_gt=isgt2)
 
     # Shared origin = GT minimum
     origin = coords_g.min(axis=0).astype(np.float32)
@@ -121,6 +123,16 @@ def patch_level_evaluation(
     # -------- final metric --------
     return patch_cosine_score(P_g, P_r)
 
+def out_fun(adatagt, adatarecon, isgt1, isgt2):
+    score = patch_level_evaluation(
+        adatagt,
+        adatarecon,
+        label_key="Harmony_labels",
+        isgt1=isgt1,
+        isgt2=isgt2
+    )
+
+    print(score)
 
 # =========================
 # 7. RUN
@@ -128,38 +140,24 @@ def patch_level_evaluation(
 if __name__ == "__main__":
     adata_recon_csa = ad.read_h5ad(
         "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn.h5ad")
-    adata_recon_atp = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain.h5ad")
-    adata_recon2_noni = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_noniche.h5ad")
+
     adata_recon_noni1 = ad.read_h5ad(
         "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn_noniche_new.h5ad"
     )
     adata_dsgt = ad.read_h5ad(
         "/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_starmap_brain.h5ad")
+    adata_dsgt_new = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_starmap_brain_new.h5ad"
+    )
     adata_recon_csa03drop = ad.read_h5ad(
         "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn_03drop.h5ad"
     )
     adata_gt = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad")
-
-    print("Computing patch-level cosine similarity (patch_size=50x50x50 μm, raw coords)...")
-    print()
-
-    score = patch_level_evaluation(
-        adata_recon_csa, adata_gt, label_key="Harmony_labels")
-    score1 = patch_level_evaluation(
-        adata_recon_noni1, adata_gt, label_key="Harmony_labels")
-    score2 = patch_level_evaluation(
-        adata_recon2_noni, adata_gt, label_key="Harmony_labels")
-    score3 = patch_level_evaluation(
-        adata_dsgt, adata_gt, label_key="Harmony_labels")
-    score4 = patch_level_evaluation(
-        adata_recon_csa03drop, adata_gt, label_key="Harmony_labels"
+        "/root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad"
     )
 
-    print(f"Patch cosine (crossattn):  {score:.4f}")
-    print(f"Patch level cosine (crossattn03drop):  {score4:.4f}")
-    print(f"Patch cosine (noninew):   {score1:.4f}")
-    print(f"Patch cosine (noniche):    {score2:.4f}")
-    print(f"Patch cosine (dsgt):       {score3:.4f}")
+    print("Computing patch-level cosine similarity (patch_size=50x50x50 μm, raw coords)...")
+
+    out_fun(adata_gt, adata_dsgt, isgt1=True, isgt2=False)
+    out_fun(adata_gt, adata_dsgt_new, isgt1=True, isgt2=False)
+    out_fun(adata_gt, adata_recon_csa03drop, isgt1=True, isgt2=False)
