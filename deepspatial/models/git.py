@@ -63,9 +63,8 @@ class GiT(nn.Module):
     """
 
     def __init__(self, gene_dim, patch_size, hidden_size, depth, num_heads, num_classes,
-                 mlp_ratio=4.0, niche_hidden_dim=0, niche_num_tokens=0):
+                 mlp_ratio=4.0, niche_num_tokens=0):
         super().__init__()
-        self.niche_hidden_dim = niche_hidden_dim
         self.niche_num_tokens = niche_num_tokens
         self.patch_size = patch_size
         self.num_patches_g = math.ceil(gene_dim / patch_size)
@@ -73,10 +72,6 @@ class GiT(nn.Module):
 
         # 1. Input Embedders
         self.x_embedder = nn.Linear(2, hidden_size)
-        self.n_embedder = (
-            nn.Linear(niche_hidden_dim, hidden_size)
-            if niche_num_tokens > 0 else None
-        )
         self.g_embedder = PatchEmbedder(gene_dim, patch_size, hidden_size)
 
         # 2. Condition Embedders
@@ -127,11 +122,6 @@ class GiT(nn.Module):
         nn.init.constant_(self.g_head.linear.weight, 0)
         nn.init.constant_(self.g_head.linear.bias, 0)
 
-        # Zero-init niche embedder so niche starts silent
-        if self.n_embedder is not None:
-            nn.init.constant_(self.n_embedder.weight, 0)
-            nn.init.constant_(self.n_embedder.bias, 0)
-
     def forward(self, xt, gt, t, zt, delta_z, ct, niche_tokens=None):
         """
         Parameters
@@ -151,17 +141,14 @@ class GiT(nn.Module):
         x_feat = self.x_embedder(xt).unsqueeze(1)              # (B, 1, D)
         g_feat = self.g_embedder(gt)                            # (B, N_g, D)
 
-        if niche_tokens is not None and self.n_embedder is not None:
-            n_feat = self.n_embedder(niche_tokens)              # (B, K, D)
-            h = torch.cat([n_feat, x_feat, g_feat], dim=1) + self.pos_embed
-        elif self.n_embedder is not None:
-            # Niche slot exists but no niche_tokens (dropout) → zero placeholder
+        if niche_tokens is not None and K > 0:
+            h = torch.cat([niche_tokens, x_feat, g_feat], dim=1) + self.pos_embed
+        elif K > 0:
             n_feat = torch.zeros(xt.shape[0], K, self.pos_embed.shape[-1],
                                  device=xt.device, dtype=xt.dtype)
             h = torch.cat([n_feat, x_feat, g_feat], dim=1) + self.pos_embed
         else:
             h = torch.cat([x_feat, g_feat], dim=1) + self.pos_embed
-            print("correct")
 
         g_start = K + 1  # gene tokens start after niche tokens + x token
 

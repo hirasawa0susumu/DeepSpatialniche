@@ -209,6 +209,7 @@ def main():
         niche_num_heads=_v(args.niche_num_heads, mc.get("niche_num_heads"), 4),
         niche_num_tokens=_v(args.niche_num_tokens, mc.get("niche_num_tokens"), 4),
         niche_dropout=_v(None, mc.get("niche_dropout"), 0.3),
+        niche_refresh_steps=_v(None, mc.get("niche_refresh_steps"), 5),
     )
     print(f"Parameters: {sum(p.numel() for p in model.module.parameters()):,}")
 

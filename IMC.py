@@ -9,7 +9,7 @@ from deepspatial.vis_utils import interactive_3d_labels, interactive_3d_expressi
 
 # 2. Data preparation and path parsing
 # Set this to your local dataset directory before running
-data_dir = "/root/autodl-tmp/wangjiaxiang/Datas/imc_human_breastcancer/imc_human_breastcancer/"
+data_dir = "/root/autodl-tmp/wangjiaxiang/Datas/imc_human_breastcancer/held_out/"
 file_paths = sorted(
     glob.glob(os.path.join(data_dir, "imc_*.h5ad")),
     key=lambda x: int(re.search(r'imc_(\d+)', os.path.basename(x)).group(1)),
@@ -53,7 +53,7 @@ model.setup_data(
     spatial_key='spatial',
     z_key='z_coord',
     label_key=label_key,
-    batch_size=2048
+    batch_size=2048,
 )
 
 # Build model: configure architecture hyperparameters
@@ -66,7 +66,8 @@ model.build_model(
     niche_hidden_dim=256,
     niche_num_heads=4,
     niche_num_tokens=4,
-    niche_dropout=0.3
+    niche_dropout=0.3,
+    niche_refresh_steps=5
 )
 
 # Train: set checkpoint directory and device options
@@ -84,9 +85,9 @@ model.fit(
 
 adata_3d = model.reconstruct_full_volume(
     adata_list,
-    thickness=2
+    thickness=1,
+
 )
 
 os.makedirs("output", exist_ok=True)
-adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_1.h5ad")
-print("Saved reconstruction to output/deepspatial_3d_imc_breastcancer.h5ad")
+adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout_smb.h5ad")

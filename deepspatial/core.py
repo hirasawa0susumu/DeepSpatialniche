@@ -168,7 +168,8 @@ class DeepSpatial:
                     niche_hidden_dim: int = 128,
                     niche_num_heads: int = 4,
                     niche_num_tokens: int = 4,
-                    niche_dropout: float = 0.3):
+                    niche_dropout: float = 0.3,
+                    niche_refresh_steps: int = 5):
         """
         Instantiates the GiT network architecture and Flow Matching logic.
 
@@ -224,14 +225,13 @@ class DeepSpatial:
             "atol": atol,
             "rtol": rtol,
             "niche_dropout": niche_dropout,
+            "niche_refresh_steps": niche_refresh_steps,
         }
 
-        model_niche_dim = niche_hidden_dim if use_niche_encoder else 0
         model_niche_ntokens = niche_num_tokens if use_niche_encoder else 0
         self.model = GiT(
             gene_dim=self.gene_dim,
             num_classes=self.num_classes,
-            niche_hidden_dim=model_niche_dim,
             niche_num_tokens=model_niche_ntokens,
             **self.model_config
         )
@@ -591,21 +591,29 @@ class DeepSpatial:
                     'delta_z': torch.full((len(chunk_parents), 1), z_end - z_start, device=dev)
                 }
 
-                # Compute niche tokens for parent cells
+                # Compute niche tokens for parent cells (source-slice anchor)
                 if has_niche:
                     nref = niche_ref_0 if is_forward else niche_ref_1
-                    nbr_idx = nref['neighbors'][chunk_parents]              # (chunk, K)
-                    g_nbr = g_ref[nbr_idx]                                   # (chunk, K, gene_dim)
-                    delta_nbr = nref['deltas'][chunk_parents]               # (chunk, K, 2)
-                    dist_nbr = nref['dists'][chunk_parents]                 # (chunk, K)
+                    nbr_idx = nref['neighbors'][chunk_parents]
+                    g_nbr = g_ref[nbr_idx]
+                    delta_nbr = nref['deltas'][chunk_parents]
+                    dist_nbr = nref['dists'][chunk_parents]
+                    msk_nbr = nref['mask'][chunk_parents]
                     batch['niche_tokens'] = _niche_enc(
                         g_center=g_ref[chunk_parents],
                         pos_center=x_ref[chunk_parents],
                         g_nbrs=g_nbr,
                         delta_nbrs=delta_nbr,
                         dist_nbrs=dist_nbr,
-                        mask_nbr=nref['mask'][chunk_parents],
+                        mask_nbr=msk_nbr,
                     )
+                    # Raw neighbor data for refreshing niche during ODE integration
+                    batch['niche_nbr_data'] = {
+                        'g_nbr': g_nbr,
+                        'delta_nbr': delta_nbr,
+                        'dist_nbr': dist_nbr,
+                        'mask_nbr': msk_nbr,
+                    }
 
                 res = self.module.sample(batch, mode="ODE", steps=steps)
                 

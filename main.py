@@ -72,7 +72,8 @@ model.build_model(
     niche_hidden_dim=256,
     niche_num_heads=4,
     niche_num_tokens=4,
-    niche_dropout=dropout_rate
+    niche_dropout=dropout_rate,
+    niche_refresh_steps=5
 )
 model.fit(
     max_epochs=10,
@@ -87,4 +88,4 @@ adata_3d = model.reconstruct_full_volume(
     use_niche=True
 )
 os.makedirs('output', exist_ok=True)
-adata_3d.write_h5ad('output/deepspatial_3d_starmap_brain_crossattn_03drop_new.h5ad')
+adata_3d.write_h5ad('output/deepspatial_3d_starmap_brain_crossattn_dynani.h5ad')

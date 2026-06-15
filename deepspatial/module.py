@@ -85,19 +85,24 @@ class DeepSpatialModule(pl.LightningModule):
         _, ct, uc_t = self.transport.path_sampler.plan(t, c0, c1)
         _, zt, _ = self.transport.path_sampler.plan(t, z0, z1)
 
-        # Niche tokens: fixed source-slice microenvironment (consistent with inference)
+        # Niche tokens: recompute from interpolated state (gt, xt)
         niche_tokens = None
         if self.niche_encoder is not None and 'g_nbr' in batch:
             niche_dropout = self.hparams.get('niche_dropout', 0.3)
             if self.training and torch.rand(1).item() < niche_dropout:
                 niche_tokens = None
             else:
+                # Reconstruct neighbor absolute positions, then recompute
+                # relative deltas and distances against interpolated xt.
+                nbr_abs = x0.unsqueeze(1) + batch['delta_nbr']       # (B, K, 2)
+                delta_t = nbr_abs - xt.unsqueeze(1)                  # (B, K, 2)
+                dist_t = delta_t.norm(dim=-1)                        # (B, K)
                 niche_tokens = self.niche_encoder(
-                    g_center=g0,
-                    pos_center=x0,
+                    g_center=gt,
+                    pos_center=xt,
                     g_nbrs=batch['g_nbr'],
-                    delta_nbrs=batch['delta_nbr'],
-                    dist_nbrs=batch['dist_nbr'],
+                    delta_nbrs=delta_t,
+                    dist_nbrs=dist_t,
                     mask_nbr=batch.get('mask_nbr'),
                 )
 
@@ -204,7 +209,13 @@ class DeepSpatialModule(pl.LightningModule):
         x0, g0, c0 = batch['x0'], batch['g0'], batch['c0']
         x_dim, g_dim = x0.shape[-1], g0.shape[-1]
         z0, z1, delta_z = batch['z0'], batch['z1'], batch['delta_z']
-        niche_tokens = batch.get('niche_tokens', None)  # pre-computed niche tokens
+        niche_tokens = batch.get('niche_tokens', None)  # initial niche from source slice
+        niche_nbr_data = batch.get('niche_nbr_data', None)  # raw neighbor data for refresh
+        niche_refresh_every = self.hparams.get('niche_refresh_steps', 5)
+
+        # Use mutable list to allow in-place updates from the ODE wrapper
+        _niche = [niche_tokens]
+        _step_counter = [0]
 
         # Concatenate for joint integration
         init_state = torch.cat([x0, g0, c0], dim=-1)
@@ -226,10 +237,30 @@ class DeepSpatialModule(pl.LightningModule):
             # Interpolate normalized Z coordinate
             _, zt, _ = self.transport.path_sampler.plan(t_tensor, z0, z1)
 
+            # Refresh niche tokens every N steps from current (xt, gt)
+            if niche_nbr_data is not None and _step_counter[0] % niche_refresh_every == 0:
+                nbr_abs = x0.unsqueeze(1) + niche_nbr_data['delta_nbr']  # absolute positions
+                delta_t = nbr_abs - xt.unsqueeze(1)
+                dist_t = delta_t.norm(dim=-1)
+                _niche_enc = (
+                    self.ema_niche_encoder
+                    if getattr(self, 'ema_niche_encoder', None) is not None
+                    else self.niche_encoder
+                )
+                _niche[0] = _niche_enc(
+                    g_center=gt,
+                    pos_center=xt,
+                    g_nbrs=niche_nbr_data['g_nbr'],
+                    delta_nbrs=delta_t,
+                    dist_nbrs=dist_t,
+                    mask_nbr=niche_nbr_data['mask_nbr'],
+                )
+            _step_counter[0] += 1
+
             # Forward pass through EMA model
             vx, vg, vc = self.ema_model(
                 xt=xt, gt=gt, t=t_tensor, zt=zt, delta_z=delta_z, ct=ct,
-                niche_tokens=niche_tokens,
+                niche_tokens=_niche[0],
             )
             return torch.cat([vx, vg, vc], dim=-1)
 
