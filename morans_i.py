@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from scipy.sparse import issparse
+from scipy.stats import spearmanr
 from sklearn.neighbors import NearestNeighbors
 
 
@@ -127,7 +128,7 @@ def plot_morans_i(mg, mr, r, gene_names, marker_indices, output_dir):
     ax.set_ylim(lo, hi)
     ax.set_xlabel("Ground Truth Moran's I")
     ax.set_ylabel("Reconstruction Moran's I")
-    ax.set_title(f"Moran's I — top {len(mg)} HVGs  (Pearson R = {r:.4f})")
+    ax.set_title(f"Moran's I — top {len(mg)} HVGs  (Spearman R = {r:.4f})")
     ax.legend(loc="lower right")
     fig.tight_layout()
     path = os.path.join(output_dir, "morans_i.pdf")
@@ -173,9 +174,9 @@ if __name__ == "__main__":
 
     valid = ~(np.isnan(moran_gt) | np.isnan(moran_recon))
     mg, mr = moran_gt[valid], moran_recon[valid]
-    r = float(np.corrcoef(mg, mr)[0, 1])
+    r = spearmanr(mg, mr).correlation
 
-    print(f"\n  Pearson R (Moran's I): {r:.4f}  (1 = perfect)")
+    print(f"\n  Spearman R (Moran's I): {r:.4f}  (1 = perfect)")
     print(f"  Valid genes: {valid.sum()}/{len(top_genes)}")
 
     # --- marker genes ---

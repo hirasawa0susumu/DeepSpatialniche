@@ -58,21 +58,25 @@ def build_patch_composition(patch_idx, labels, grid_shape, n_types):
 # =========================
 # 5. patch cosine metric
 # =========================
-def patch_cosine_score(P_pred, P_gt):
-    """Only evaluate patches where GT has cells (per paper).
-    GT-empty patches are ignored; pred-empty patches get score=0."""
+def patch_cosine_score(P_gt, P_pred):
+    """Cosine similarity evaluated where GT is occupied.
+
+    GT-empty   → skip  (can't evaluate where GT has no data)
+    GT-filled + pred-empty  → 0  (recon missed cells)
+    GT-filled + pred-filled → cos(gt, pred)
+    """
     scores = []
     for a, b in zip(P_gt, P_pred):
         na = np.linalg.norm(a)
         nb = np.linalg.norm(b)
 
         if na == 0 and nb == 0:
-            continue          # both empty → skip
+            continue                   # GT empty → skip
+        if na != 0 and nb == 0:
+            # scores.append(0.0)         # GT filled, pred empty → penalize
+            continue
         if na == 0 and nb != 0:
             scores.append(0.0)
-            continue          #     GT empty, pred hallucinated → skip
-        if na != 0 and nb == 0:
-            # scores.append(0.0)  # GT occupied, pred empty → score 0
             continue
 
         scores.append(float(np.dot(a, b) / (na * nb)))
@@ -95,8 +99,8 @@ def patch_level_evaluation(
     coords_r = get_3d_coords(adata_recon, is_gt=isgt1)
     coords_g = get_3d_coords(adata_gt, is_gt=isgt2)
 
-    # Shared origin = GT minimum
-    origin = coords_g.min(axis=0).astype(np.float32)
+    # Shared origin = minimum of both (no cell gets negative patch index)
+    origin = np.minimum(coords_r.min(axis=0), coords_g.min(axis=0)).astype(np.float32)
     patch_size = np.array(patch_size, dtype=np.float32)
 
     # -------- labels --------
@@ -121,7 +125,7 @@ def patch_level_evaluation(
     P_g = build_patch_composition(patch_g, labels_g, grid_shape, n_types)
 
     # -------- final metric --------
-    return patch_cosine_score(P_g, P_r)
+    return patch_cosine_score(P_r, P_g)
 
 def out_fun(adatagt, adatarecon, isgt1, isgt2):
     score = patch_level_evaluation(
@@ -161,3 +165,4 @@ if __name__ == "__main__":
     out_fun(adata_gt, adata_dsgt, isgt1=True, isgt2=False)
     out_fun(adata_gt, adata_dsgt_new, isgt1=True, isgt2=False)
     out_fun(adata_gt, adata_recon_csa03drop, isgt1=True, isgt2=False)
+    out_fun(adata_gt, adata_recon_noni1, isgt1=True, isgt2=False)
