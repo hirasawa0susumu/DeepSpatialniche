@@ -23,7 +23,7 @@ import scanpy as sc
 import yaml
 
 import deepspatial as ds
-from deepspatial.models.niche_encoder import precompute_neighbors
+from deepspatial.models.niche_encoder import precompute_multiscale_neighbors
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +169,10 @@ def main():
             ckpt_cfg = json.load(f)
         nec = ckpt_cfg.get("niche_encoder_config", {})
         if nec.get("use_niche_encoder", False):
-            print("Precomputing spatial neighbors for niche encoder...")
-            precompute_neighbors(adatas, spatial_key="spatial_norm", K=32)
+            print("Precomputing multi-scale spatial neighbors...")
+            precompute_multiscale_neighbors(adatas, spatial_key="spatial_norm")
+            print("Precomputing UOT target mappings for dynamic niche...")
+            model._precompute_uot_mappings(adatas)
 
     # --- reconstruct ---
     print(f"Reconstructing 3D volume ({len(adatas)} slices)...")

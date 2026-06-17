@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from .uot_solver import compute_uot_coupling
-from ..models.niche_encoder import precompute_neighbors
+from ..models.niche_encoder import precompute_multiscale_neighbors
 
 class DeepSpatialDataset(Dataset):
     """
@@ -61,8 +61,8 @@ class DeepSpatialDataset(Dataset):
             self.num_classes = 1
             self.id2label = {0: "unknown"}
 
-        # Precompute spatial KNN neighbors for niche encoding
-        precompute_neighbors(adata_list, spatial_key=spatial_key, K=32)
+        # Precompute multi-scale spatial KNN neighbors for niche encoding
+        precompute_multiscale_neighbors(adata_list, spatial_key=spatial_key)
 
         if mode != 'fit':
             self.adata_list = self.adata_list[:2]
@@ -72,8 +72,14 @@ class DeepSpatialDataset(Dataset):
             'x0': [], 'g0': [], 'c0': [], 'z0': [],
             'x1': [], 'g1': [], 'c1': [], 'z1': [],
             'delta_z': [],
-            # Niche fields (source cell's local microenvironment)
-            'g_nbr': [], 'c_nbr': [], 'delta_nbr': [], 'dist_nbr': [], 'mask_nbr': [],
+            # Multi-scale source neighbor data
+            'g_nbr_local': [], 'delta_nbr_local': [], 'dist_nbr_local': [], 'mask_nbr_local': [],
+            'g_nbr_mid':   [], 'delta_nbr_mid':   [], 'dist_nbr_mid':   [], 'mask_nbr_mid': [],
+            'g_nbr_global':[], 'delta_nbr_global':[], 'dist_nbr_global':[], 'mask_nbr_global':[],
+            # Dynamic niche: UOT-mapped target data per scale
+            'g_nbr_target_local': [],  'pos_nbr_target_local': [],
+            'g_nbr_target_mid':   [],  'pos_nbr_target_mid': [],
+            'g_nbr_target_global':[],  'pos_nbr_target_global': [],
         }
         
         self._build_trajectory_dataset()
@@ -131,32 +137,58 @@ class DeepSpatialDataset(Dataset):
                 idx_flat = np.random.choice(len(pi_flat), size=n_to_sample, p=pi_prob, replace=True)
                 idx0, idx1 = np.unravel_index(idx_flat, pi.shape)
 
-                # --- Extract source cell's niche (neighbors from the same slice) ---
-                nbr_idx = self.adata_list[k].uns['niche_neighbors'][idx0]       # (n_to_sample, K)
-                g_nbr = g0[nbr_idx]                                              # (n_to_sample, K, gene_dim)
-                c_nbr_raw = (
-                    self.adata_list[k].obs[self.label_key].astype(str).values[nbr_idx]
-                )
-                c_nbr = self.label_encoder.transform(c_nbr_raw.ravel()).reshape(
-                    n_to_sample, -1
-                ).astype(np.int64)                                                # (n_to_sample, K)
-                delta_nbr = self.adata_list[k].uns['niche_deltas'][idx0]         # (n_to_sample, K, 2)
-                dist_nbr = self.adata_list[k].uns['niche_dists'][idx0]           # (n_to_sample, K)
-                mask_nbr = self.adata_list[k].uns.get('niche_mask', np.ones((g0.shape[0], 32), dtype=bool))[idx0]  # (n_to_sample, K)
+                # --- UOT target mapping (cell-level, shared across scales) ---
+                pi_norm = pi / (pi.sum(axis=1, keepdims=True) + 1e-16)
+                g_mapped = pi_norm @ g1   # (N0, G)
+                pos_mapped = pi_norm @ x1  # (N0, 2)
 
-                # Store trajectory endpoints
+                def _extract_scale(scale_key, K_default):
+                    nk = f'niche_{scale_key}_neighbors'
+                    dk = f'niche_{scale_key}_deltas'
+                    dsk = f'niche_{scale_key}_dists'
+                    mk = f'niche_{scale_key}_mask'
+                    nbr_idx = self.adata_list[k].uns[nk][idx0]
+                    g_nbr = g0[nbr_idx]
+                    delta = self.adata_list[k].uns[dk][idx0]
+                    dist = self.adata_list[k].uns[dsk][idx0]
+                    msk = self.adata_list[k].uns.get(
+                        mk, np.ones((g0.shape[0], K_default), dtype=bool))[idx0]
+                    g_tgt = g_mapped[nbr_idx]
+                    pos_tgt = pos_mapped[nbr_idx]
+                    return g_nbr, delta, dist, msk, g_tgt, pos_tgt
+
+                (gl, dl, dstl, ml, gtl, ptl) = _extract_scale('local', 8)
+                (gm_, dm_, dstm, mm, gtm, ptm) = _extract_scale('mid', 32)
+                (gg, dg, dstg, mg, gtg, ptg) = _extract_scale('global', 128)
+
+                # Store endpoints
                 self.trajectory_pairs['x0'].append(x0[idx0])
                 self.trajectory_pairs['g0'].append(g0[idx0])
                 self.trajectory_pairs['c0'].append(c0[idx0])
                 self.trajectory_pairs['z0'].append(np.full((n_to_sample, 1), z0, dtype=np.float32))
 
-                # Store niche data
-                self.trajectory_pairs['g_nbr'].append(g_nbr)
-                self.trajectory_pairs['c_nbr'].append(c_nbr)
-                self.trajectory_pairs['delta_nbr'].append(delta_nbr)
-                self.trajectory_pairs['dist_nbr'].append(dist_nbr)
-                self.trajectory_pairs['mask_nbr'].append(mask_nbr)
-                
+                # Store multi-scale source niche
+                self.trajectory_pairs['g_nbr_local'].append(gl)
+                self.trajectory_pairs['delta_nbr_local'].append(dl)
+                self.trajectory_pairs['dist_nbr_local'].append(dstl)
+                self.trajectory_pairs['mask_nbr_local'].append(ml)
+                self.trajectory_pairs['g_nbr_mid'].append(gm_)
+                self.trajectory_pairs['delta_nbr_mid'].append(dm_)
+                self.trajectory_pairs['dist_nbr_mid'].append(dstm)
+                self.trajectory_pairs['mask_nbr_mid'].append(mm)
+                self.trajectory_pairs['g_nbr_global'].append(gg)
+                self.trajectory_pairs['delta_nbr_global'].append(dg)
+                self.trajectory_pairs['dist_nbr_global'].append(dstg)
+                self.trajectory_pairs['mask_nbr_global'].append(mg)
+
+                # Store dynamic target-mapped data
+                self.trajectory_pairs['g_nbr_target_local'].append(gtl)
+                self.trajectory_pairs['pos_nbr_target_local'].append(ptl)
+                self.trajectory_pairs['g_nbr_target_mid'].append(gtm)
+                self.trajectory_pairs['pos_nbr_target_mid'].append(ptm)
+                self.trajectory_pairs['g_nbr_target_global'].append(gtg)
+                self.trajectory_pairs['pos_nbr_target_global'].append(ptg)
+
                 self.trajectory_pairs['x1'].append(x1[idx1])
                 self.trajectory_pairs['g1'].append(g1[idx1])
                 self.trajectory_pairs['c1'].append(c1[idx1])
@@ -172,9 +204,7 @@ class DeepSpatialDataset(Dataset):
         for key in self.trajectory_pairs:
             if self.trajectory_pairs[key]:
                 concatenated = np.concatenate(self.trajectory_pairs[key], axis=0)
-                if key in ('c_nbr',):
-                    self.tensors[key] = torch.from_numpy(concatenated).long()
-                elif key in ('mask_nbr',):
+                if key.startswith('mask_nbr'):
                     self.tensors[key] = torch.from_numpy(concatenated).bool()
                 else:
                     self.tensors[key] = torch.from_numpy(concatenated).float()

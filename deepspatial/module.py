@@ -85,16 +85,52 @@ class DeepSpatialModule(pl.LightningModule):
         _, ct, uc_t = self.transport.path_sampler.plan(t, c0, c1)
         _, zt, _ = self.transport.path_sampler.plan(t, z0, z1)
 
-        # Niche token: fixed source-slice microenvironment (consistent with inference)
+        # Multi-scale niche with dynamic interpolation at training time t
         niche_token = None
-        if self.niche_encoder is not None and 'g_nbr' in batch:
+        if self.niche_encoder is not None:
             niche_dropout = self.hparams.get('niche_dropout', 0.3)
+            is_multiscale = 'g_nbr_local' in batch
             if self.training and torch.rand(1).item() < niche_dropout:
                 niche_token = None
-            else:
+            elif is_multiscale:
+                has_dynamic = 'g_nbr_target_local' in batch
+                t_3d = t[:, None, None, None]
+
+                def _interp(scale):
+                    gs = batch[f'g_nbr_{scale}']
+                    ds = batch[f'delta_nbr_{scale}']
+                    mk = batch.get(f'mask_nbr_{scale}')
+                    if has_dynamic:
+                        gtgt = batch[f'g_nbr_target_{scale}']
+                        ptgt = batch[f'pos_nbr_target_{scale}']
+                        gi = (1 - t_3d) * gs + t_3d * gtgt
+                        pa = x0.unsqueeze(1) + ds
+                        pi = (1 - t_3d) * pa + t_3d * ptgt
+                        di = pi - xt.unsqueeze(1)
+                        dst = di.norm(dim=-1)
+                    else:
+                        gi = gs
+                        pa = x0.unsqueeze(1) + ds
+                        di = pa - xt.unsqueeze(1)
+                        dst = di.norm(dim=-1)
+                    return gi, di, dst, mk
+
+                gl, dl, dstl, ml = _interp('local')
+                gm_, dm_, dstm, mm = _interp('mid')
+                gg, dg, dstg, mg = _interp('global')
+
                 niche_token = self.niche_encoder(
-                    g_center=g0,
-                    pos_center=x0,
+                    g_center=gt, pos_center=xt,
+                    g_nbrs_local=gl, delta_local=dl,
+                    dist_local=dstl, mask_local=ml,
+                    g_nbrs_mid=gm_, delta_mid=dm_,
+                    dist_mid=dstm, mask_mid=mm,
+                    g_nbrs_global=gg, delta_global=dg,
+                    dist_global=dstg, mask_global=mg,
+                )
+            elif 'g_nbr' in batch:
+                niche_token = self.niche_encoder(
+                    g_center=g0, pos_center=x0,
                     g_nbrs=batch['g_nbr'],
                     delta_nbrs=batch['delta_nbr'],
                     dist_nbrs=batch['dist_nbr'],
@@ -162,89 +198,95 @@ class DeepSpatialModule(pl.LightningModule):
     # ============================================================
     @torch.no_grad()
     def sample(self, batch, mode="ODE", steps=20):
-        """
-        Integrates the learned flow field to reconstruct intermediate biological states.
-
-
-        Parameters
-        ----------
-        batch : dict
-            A dictionary containing the initial states (`x0`, `g0`, `c0`), the physical 
-            Z-depth conditions (`z0`, `z1`, `delta_z`), and other necessary tensors.
-        mode : str, optional
-            The integration mode, either `"ODE"` (Ordinary Differential Equation) or 
-            `"SDE"` (Stochastic Differential Equation). By default `"ODE"`.
-        steps : int, optional
-            The number of integration steps from the source to the target slice. 
-            Higher values yield more accurate but slower trajectories. By default 20.
-
-        Returns
-        -------
-        dict
-            A dictionary containing the full integration trajectories:
-            - `'x_traj'` : torch.Tensor of shape `(Steps, Batch, 2)`
-            - `'g_traj'` : torch.Tensor of shape `(Steps, Batch, Gene_Dim)`
-            - `'c_traj_discrete'` : torch.Tensor of shape `(Steps, Batch)` containing discrete cell type labels.
-        """
-
+        """ODE integration with multi-scale dynamic niche refresh."""
         self.ema_model.eval()
-        
-        # Configure the ODE/SDE sampler based on hyperparameters
+
         sample_config = {
             'num_steps': steps,
             'sampling_method': self.hparams.get('sampling_method', 'dopri5'),
             'atol': self.hparams.get('atol', 1e-5),
             'rtol': self.hparams.get('rtol', 1e-5)
         }
-        
-        # Instantiate the integration function
-        sampler_fn = self.sampler.sample_ode(**sample_config) if mode == "ODE" else self.sampler.sample_sde(**sample_config)
+        sampler_fn = (self.sampler.sample_ode(**sample_config)
+                      if mode == "ODE" else self.sampler.sample_sde(**sample_config))
 
-        # Initial state at t=0
         x0, g0, c0 = batch['x0'], batch['g0'], batch['c0']
         x_dim, g_dim = x0.shape[-1], g0.shape[-1]
         z0, z1, delta_z = batch['z0'], batch['z1'], batch['delta_z']
-        niche_token = batch.get('niche_token', None)  # pre-computed niche token
+        niche_token = batch.get('niche_token', None)
+        niche_nbr_data = batch.get('niche_nbr_data', None)
+        niche_refresh_every = self.hparams.get('niche_refresh_steps', 5)
 
-        # Concatenate for joint integration
+        _niche_enc = (self.ema_niche_encoder if getattr(self, 'ema_niche_encoder', None) is not None
+                      else self.niche_encoder)
+
+        _niche = [niche_token]
+        _step_counter = [0]
+
         init_state = torch.cat([x0, g0, c0], dim=-1)
 
         def velocity_field_wrapper(joint_state_t, t):
-            # Unpack modalities
             xt = joint_state_t[..., :x_dim]
             gt = joint_state_t[..., x_dim : x_dim + g_dim]
             ct = joint_state_t[..., x_dim + g_dim :]
 
-            # Ensure t is a tensor on the correct device
-            if torch.is_tensor(t):
-                t_val = t.item() if t.dim() == 0 else t[0].item()
-            else:
-                t_val = t
-
+            t_val = (t.item() if (torch.is_tensor(t) and t.dim() == 0)
+                     else (t[0].item() if torch.is_tensor(t) else t))
             t_tensor = torch.full((xt.shape[0],), t_val, device=xt.device, dtype=xt.dtype)
-
-            # Interpolate normalized Z coordinate
             _, zt, _ = self.transport.path_sampler.plan(t_tensor, z0, z1)
 
-            # Forward pass through EMA model
+            # Periodic multi-scale dynamic niche refresh
+            if niche_nbr_data is not None and _step_counter[0] % niche_refresh_every == 0:
+                has_dyn = 'g_nbr_target_local' in niche_nbr_data
+                is_ms = 'g_nbr_local' in niche_nbr_data
+                tc = min(max(t_val, 0.0), 1.0)
+
+                if is_ms:
+                    def _ref(scale):
+                        gs = niche_nbr_data[f'g_nbr_{scale}']
+                        ds = niche_nbr_data[f'delta_nbr_{scale}']
+                        mk = niche_nbr_data.get(f'mask_nbr_{scale}')
+                        if has_dyn:
+                            gtgt = niche_nbr_data[f'g_nbr_target_{scale}']
+                            ptgt = niche_nbr_data[f'pos_nbr_target_{scale}']
+                            gi = (1 - tc) * gs + tc * gtgt
+                            pa = x0.unsqueeze(1) + ds
+                            pi = (1 - tc) * pa + tc * ptgt
+                            di = pi - xt.unsqueeze(1)
+                            dst = di.norm(dim=-1)
+                        else:
+                            gi = gs
+                            di = (x0.unsqueeze(1) + ds) - xt.unsqueeze(1)
+                            dst = di.norm(dim=-1)
+                        return gi, di, dst, mk
+
+                    gl, dl, dstl, ml = _ref('local')
+                    gm_, dm_, dstm, mm = _ref('mid')
+                    gg, dg, dstg, mg = _ref('global')
+
+                    _niche[0] = _niche_enc(
+                        g_center=gt, pos_center=xt,
+                        g_nbrs_local=gl, delta_local=dl,
+                        dist_local=dstl, mask_local=ml,
+                        g_nbrs_mid=gm_, delta_mid=dm_,
+                        dist_mid=dstm, mask_mid=mm,
+                        g_nbrs_global=gg, delta_global=dg,
+                        dist_global=dstg, mask_global=mg,
+                    )
+            _step_counter[0] += 1
+
             vx, vg, vc = self.ema_model(
                 xt=xt, gt=gt, t=t_tensor, zt=zt, delta_z=delta_z, ct=ct,
-                niche_token=niche_token,
+                niche_token=_niche[0],
             )
             return torch.cat([vx, vg, vc], dim=-1)
 
-        # Compute trajectory: Shape [steps, batch, dim]
         trajectory = sampler_fn(init_state, velocity_field_wrapper)
         if isinstance(trajectory, (list, tuple)):
             trajectory = torch.stack(trajectory, dim=0)
-        
-        # Unpack integrated results
-        x_traj = trajectory[..., :x_dim]
-        g_traj = trajectory[..., x_dim : x_dim + g_dim]
-        c_traj_cont = trajectory[..., x_dim + g_dim :]
-        
+
         return {
-            'x_traj': x_traj,
-            'g_traj': g_traj,
-            'c_traj_discrete': torch.argmax(c_traj_cont, dim=-1)
+            'x_traj': trajectory[..., :x_dim],
+            'g_traj': trajectory[..., x_dim : x_dim + g_dim],
+            'c_traj_discrete': torch.argmax(trajectory[..., x_dim + g_dim:], dim=-1)
         }

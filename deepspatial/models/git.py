@@ -97,12 +97,13 @@ class GiT(nn.Module):
         The expansion ratio for the MLP inside transformer blocks, by default 4.0.
     """
     def __init__(self, gene_dim, patch_size, hidden_size, depth, num_heads, num_classes,
-                 mlp_ratio=4.0, niche_hidden_dim=0):
+                 mlp_ratio=4.0, niche_hidden_dim=0, niche_num_tokens=1):
         super().__init__()
         self.niche_hidden_dim = niche_hidden_dim
+        self.niche_num_tokens = niche_num_tokens
         self.patch_size = patch_size
         self.num_patches_x = 1
-        self.num_patches_n = 1 if niche_hidden_dim > 0 else 0
+        self.num_patches_n = niche_num_tokens if niche_hidden_dim > 0 else 0
         self.num_patches_g = math.ceil(gene_dim / patch_size)
         self.num_patches = self.num_patches_x + self.num_patches_n + self.num_patches_g
 
@@ -192,15 +193,15 @@ class GiT(nn.Module):
         g_feat = self.g_embedder(gt)                                       # [B, N_g, D]
 
         if niche_token is not None and self.n_embedder is not None:
-            n_feat = self.n_embedder(niche_token)                          # [B, 1, D]
+            n_feat = self.n_embedder(niche_token)                          # [B, Kn, D]
             h = torch.cat([x_feat, n_feat, g_feat], dim=1) + self.pos_embed
-            g_start = 2
+            g_start = 1 + self.niche_num_tokens
         elif self.n_embedder is not None:
-            # Niche slot exists in pos_embed but no niche token (dropout) → zero placeholder
-            n_feat = torch.zeros(xt.shape[0], 1, self.pos_embed.shape[-1],
+            n_feat = torch.zeros(xt.shape[0], self.niche_num_tokens,
+                                 self.pos_embed.shape[-1],
                                  device=xt.device, dtype=xt.dtype)
             h = torch.cat([x_feat, n_feat, g_feat], dim=1) + self.pos_embed
-            g_start = 2
+            g_start = 1 + self.niche_num_tokens
         else:
             h = torch.cat([x_feat, g_feat], dim=1) + self.pos_embed
             g_start = 1

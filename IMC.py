@@ -90,4 +90,4 @@ adata_3d = model.reconstruct_full_volume(
 )
 
 os.makedirs("output", exist_ok=True)
-adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout.h5ad")
+adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout_multidyna.h5ad")

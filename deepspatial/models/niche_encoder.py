@@ -1,7 +1,11 @@
-"""Graph attention pooling niche encoder.
+"""Multi-scale niche encoder with out_key support for KNN precomputation.
 
-Spatial KNN → joint neighbor encoding → attention-weighted sum → niche token.
-Can be called at any time t with any (g_center, pos_center).
+Spatial KNN × 3 scales → per-scale neighbor encoding → per-scale attention →
+3 niche tokens concatenated.
+
+local  (K=8):   direct cell-cell contact (~5-10μm)
+mid    (K=32):  paracrine signalling (~15-30μm)
+global (K=128): tissue architecture (~50-80μm)
 """
 
 import numpy as np
@@ -14,8 +18,9 @@ from scipy.spatial import cKDTree
 # KNN precompute
 # ---------------------------------------------------------------------------
 
-def precompute_neighbors(adata_list, spatial_key='spatial_norm', K=32):
-    """Precompute K nearest spatial neighbors for every cell in each 2D slice."""
+def precompute_neighbors(adata_list, spatial_key='spatial_norm', K=32,
+                        out_key='niche'):
+    """Precompute K nearest spatial neighbors, stored under adata.uns[f'{out_key}_*']."""
     for adata in adata_list:
         coords = adata.obsm[spatial_key].astype(np.float64)
         n_cells = len(coords)
@@ -38,20 +43,87 @@ def precompute_neighbors(adata_list, spatial_key='spatial_norm', K=32):
             deltas = np.pad(deltas, ((0, 0), (0, pad), (0, 0)), constant_values=0.0)
             valid_mask = np.pad(valid_mask, ((0, 0), (0, pad)), constant_values=False)
 
-        adata.uns['niche_neighbors'] = nbr_idx
-        adata.uns['niche_deltas'] = deltas
-        adata.uns['niche_dists'] = nbr_dists
-        adata.uns['niche_mask'] = valid_mask
+        adata.uns[f'{out_key}_neighbors'] = nbr_idx
+        adata.uns[f'{out_key}_deltas'] = deltas
+        adata.uns[f'{out_key}_dists'] = nbr_dists
+        adata.uns[f'{out_key}_mask'] = valid_mask
+
+
+def precompute_multiscale_neighbors(adata_list, spatial_key='spatial_norm'):
+    """Precompute three KNN layers for multi-scale niche encoding."""
+    for K, key in [(8, 'niche_local'), (32, 'niche_mid'), (128, 'niche_global')]:
+        precompute_neighbors(adata_list, spatial_key=spatial_key, K=K, out_key=key)
 
 
 # ---------------------------------------------------------------------------
-# NicheEncoder
+# NicheEncoder (original, single-scale)
 # ---------------------------------------------------------------------------
 
 class NicheEncoder(nn.Module):
-    """Graph attention pooling: KNN → joint MLP → attention → weighted sum + residual.
+    """Original graph attention pooling niche encoder. Returns (B, 1, D)."""
 
-    Output: niche token (B, 1, hidden_dim), ready to concat into GiT token sequence.
+    def __init__(self, gene_dim, hidden_dim=128, num_heads=4):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads
+
+        self.nbr_encoder = nn.Sequential(
+            nn.Linear(gene_dim + 3, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+        self.center_proj = nn.Linear(gene_dim + 2, hidden_dim)
+        self.W_q = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.W_k = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.W_v = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.res_proj = nn.Sequential(
+            nn.Linear(gene_dim + 2, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
+
+    def forward(self, g_center, pos_center, g_nbrs, delta_nbrs, dist_nbrs, mask_nbr=None):
+        B, K, _ = g_nbrs.shape
+        D = self.hidden_dim
+        H = self.num_heads
+        d = self.head_dim
+
+        nbr_feat = torch.cat([g_nbrs, delta_nbrs, dist_nbrs.unsqueeze(-1)], dim=-1)
+        h_nbr = self.nbr_encoder(nbr_feat)
+
+        c_feat = torch.cat([g_center, pos_center], dim=-1)
+        h_ctr = self.center_proj(c_feat)
+
+        q = self.W_q(h_ctr).view(B, H, d)
+        k = self.W_k(h_nbr).view(B, K, H, d)
+        v = self.W_v(h_nbr).view(B, K, H, d)
+
+        attn = torch.einsum('bhd,bkhd->bhk', q, k) * (d ** -0.5)
+        if mask_nbr is not None:
+            attn = attn.masked_fill(~mask_nbr.unsqueeze(1), float('-inf'))
+        attn = attn.softmax(dim=-1)
+
+        n_pooled = torch.einsum('bhk,bkhd->bhd', attn, v).reshape(B, D)
+        n_token = self.res_proj(c_feat) + self.out_proj(n_pooled)
+        return n_token.unsqueeze(1)
+
+
+# ---------------------------------------------------------------------------
+# MultiScaleNicheEncoder
+# ---------------------------------------------------------------------------
+
+class MultiScaleNicheEncoder(nn.Module):
+    """Multi-scale niche encoder: three KNN layers → per-scale attention.
+
+    Shared nbr_encoder + K/V projections + residual. Independent W_q + out_proj per scale.
+    Output: (B, 3, D) — local, mid, global niche tokens.
     """
 
     def __init__(self, gene_dim, hidden_dim=128, num_heads=4):
@@ -60,25 +132,27 @@ class NicheEncoder(nn.Module):
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads
 
-        # Neighbor joint encoding: [g_j, Δx, Δy, dist]
+        # Shared modules
         self.nbr_encoder = nn.Sequential(
             nn.Linear(gene_dim + 3, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
         )
-
-        # Center cell projection
         self.center_proj = nn.Linear(gene_dim + 2, hidden_dim)
-
-        # Multi-head attention
-        self.W_q = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.W_k = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.W_v = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
-        # Output
-        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
+        # Per-scale query projections
+        self.W_q_local = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.W_q_mid = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.W_q_global = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
-        # Residual
+        # Per-scale output projections
+        self.out_proj_local = nn.Linear(hidden_dim, hidden_dim)
+        self.out_proj_mid = nn.Linear(hidden_dim, hidden_dim)
+        self.out_proj_global = nn.Linear(hidden_dim, hidden_dim)
+
+        # Shared residual
         self.res_proj = nn.Sequential(
             nn.Linear(gene_dim + 2, hidden_dim),
             nn.SiLU(),
@@ -88,50 +162,54 @@ class NicheEncoder(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        nn.init.zeros_(self.out_proj.weight)
-        nn.init.zeros_(self.out_proj.bias)
+        for proj in [self.out_proj_local, self.out_proj_mid, self.out_proj_global]:
+            nn.init.zeros_(proj.weight)
+            nn.init.zeros_(proj.bias)
 
-    def forward(self, g_center, pos_center, g_nbrs, delta_nbrs, dist_nbrs, mask_nbr=None):
-        """
-        Args:
-            g_center:   (B, G)         center cell gene expression (any t)
-            pos_center: (B, 2)         center cell position (any t)
-            g_nbrs:     (B, K, G)      neighbor gene expressions
-            delta_nbrs: (B, K, 2)      relative (Δx, Δy) from center
-            dist_nbrs:  (B, K)         Euclidean distances
-            mask_nbr:   (B, K) bool    True = valid neighbor
-        Returns:
-            n_token:    (B, 1, D)      niche token
-        """
-        B, K, _ = g_nbrs.shape
-        D = self.hidden_dim
+    def _cross_attn_scale(self, h_ctr, W_q, h_nbr, mask_nbr):
+        B, K_nbr, D = h_nbr.shape
         H = self.num_heads
         d = self.head_dim
 
-        # --- neighbor encoding ---
-        nbr_feat = torch.cat([g_nbrs, delta_nbrs, dist_nbrs.unsqueeze(-1)], dim=-1)  # (B,K,G+3)
-        h_nbr = self.nbr_encoder(nbr_feat)                                            # (B,K,D)
+        q = W_q(h_ctr).view(B, H, d)
+        k = self.W_k(h_nbr).view(B, K_nbr, H, d)
+        v = self.W_v(h_nbr).view(B, K_nbr, H, d)
 
-        # --- center query ---
-        c_feat = torch.cat([g_center, pos_center], dim=-1)                            # (B,G+2)
-        h_ctr = self.center_proj(c_feat)                                              # (B,D)
-
-        # --- multi-head attention ---
-        q = self.W_q(h_ctr).view(B, H, d)              # (B,H,d)
-        k = self.W_k(h_nbr).view(B, K, H, d)            # (B,K,H,d)
-        v = self.W_v(h_nbr).view(B, K, H, d)            # (B,K,H,d)
-
-        attn = torch.einsum('bhd,bkhd->bhk', q, k) * (d ** -0.5)  # (B,H,K)
-
+        attn = torch.einsum('bhd,bkhd->bhk', q, k) * (d ** -0.5)
         if mask_nbr is not None:
             attn = attn.masked_fill(~mask_nbr.unsqueeze(1), float('-inf'))
+        attn = attn.softmax(dim=-1)
 
-        attn = attn.softmax(dim=-1)                                            # (B,H,K)
+        return torch.einsum('bhk,bkhd->bhd', attn, v).reshape(B, D)
 
-        n_pooled = torch.einsum('bhk,bkhd->bhd', attn, v)                     # (B,H,d)
-        n_pooled = n_pooled.reshape(B, D)                                      # (B,D)
+    def _encode(self, g_nbrs, delta_nbrs, dist_nbrs):
+        feat = torch.cat([g_nbrs, delta_nbrs, dist_nbrs.unsqueeze(-1)], dim=-1)
+        return self.nbr_encoder(feat)
 
-        # --- residual ---
-        n_token = self.res_proj(c_feat) + self.out_proj(n_pooled)              # (B,D)
+    def forward(self, g_center, pos_center,
+                g_nbrs_local, delta_local, dist_local, mask_local,
+                g_nbrs_mid, delta_mid, dist_mid, mask_mid,
+                g_nbrs_global, delta_global, dist_global, mask_global):
+        B = g_center.shape[0]
+        D = self.hidden_dim
 
-        return n_token.unsqueeze(1)  # (B,1,D) — ready to concat
+        c_feat = torch.cat([g_center, pos_center], dim=-1)
+        h_ctr = self.center_proj(c_feat)
+        residual = self.res_proj(c_feat)
+
+        # Local
+        h_local = self._encode(g_nbrs_local, delta_local, dist_local)
+        tok_local = residual + self.out_proj_local(
+            self._cross_attn_scale(h_ctr, self.W_q_local, h_local, mask_local))
+
+        # Mid
+        h_mid = self._encode(g_nbrs_mid, delta_mid, dist_mid)
+        tok_mid = residual + self.out_proj_mid(
+            self._cross_attn_scale(h_ctr, self.W_q_mid, h_mid, mask_mid))
+
+        # Global
+        h_global = self._encode(g_nbrs_global, delta_global, dist_global)
+        tok_global = residual + self.out_proj_global(
+            self._cross_attn_scale(h_ctr, self.W_q_global, h_global, mask_global))
+
+        return torch.stack([tok_local, tok_mid, tok_global], dim=1)  # (B, 3, D)

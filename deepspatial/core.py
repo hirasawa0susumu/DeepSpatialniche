@@ -12,7 +12,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from .data_utils import DeepSpatialDataset
 from .models import GiT
-from .models.niche_encoder import NicheEncoder
+from .models.niche_encoder import NicheEncoder, MultiScaleNicheEncoder
 from .module import DeepSpatialModule
 
 
@@ -46,6 +46,7 @@ class DeepSpatial:
         # Configuration dictionaries
         self.model_config = {}
         self.train_config = {}
+        self.uot_params = {}
 
     def _normalize_spatial(self, adata_list: list[ad.AnnData]) -> None:
         """
@@ -90,6 +91,41 @@ class DeepSpatial:
             adata.obsm['spatial_norm'] = coords
             adata.obs['z_norm'] = norm_z_arr[i]
 
+    def _precompute_uot_mappings(self, adata_list):
+        """Precompute UOT couplings and target-mapped data for dynamic niche."""
+        from .data_utils.uot_solver import compute_uot_coupling
+
+        for k in range(len(adata_list) - 1):
+            a0, a1 = adata_list[k], adata_list[k + 1]
+            x0 = a0.obsm['spatial_norm'].astype(np.float64)
+            x1 = a1.obsm['spatial_norm'].astype(np.float64)
+            g0 = (a0.X.toarray() if scipy.sparse.issparse(a0.X)
+                  else a0.X).astype(np.float64)
+            g1 = (a1.X.toarray() if scipy.sparse.issparse(a1.X)
+                  else a1.X).astype(np.float64)
+
+            labels0 = a0.obs[self.label_key].astype(str).values
+            labels1 = a1.obs[self.label_key].astype(str).values
+            c0_int = self.categories.get_indexer(labels0)
+            c1_int = self.categories.get_indexer(labels1)
+            c0 = np.eye(len(self.categories))[c0_int].astype(np.float64)
+            c1 = np.eye(len(self.categories))[c1_int].astype(np.float64)
+
+            alpha = self.uot_params.get('alpha_spatial', 0.5)
+            reg = self.uot_params.get('uot_reg', 0.8)
+            tau = self.uot_params.get('uot_tau', 0.05)
+
+            pi = compute_uot_coupling(x0, g0, c0, x1, g1, c1,
+                                      alpha_spatial=alpha, uot_reg=reg, uot_tau=tau)
+
+            pi_norm = pi / (pi.sum(axis=1, keepdims=True) + 1e-16)
+            a0.uns['uot_g_to_next'] = (pi_norm @ g1).astype(np.float32)
+            a0.uns['uot_pos_to_next'] = (pi_norm @ x1).astype(np.float32)
+
+            pi_rev = pi.T / (pi.T.sum(axis=1, keepdims=True) + 1e-16)
+            a1.uns['uot_g_to_prev'] = (pi_rev @ g0).astype(np.float32)
+            a1.uns['uot_pos_to_prev'] = (pi_rev @ x0).astype(np.float32)
+
     def setup_data(self, 
                    adata_list: list[ad.AnnData], 
                    spatial_key: str = 'spatial',
@@ -121,9 +157,10 @@ class DeepSpatial:
         self.spatial_key = spatial_key
         self.z_key = z_key
         self.label_key = label_key
-        
+        self.uot_params = {'alpha_spatial': alpha_spatial, 'uot_reg': uot_reg, 'uot_tau': uot_tau}
+
         self._normalize_spatial(adata_list)
-        
+
         self.dataset = DeepSpatialDataset(
             adata_list=adata_list, 
             spatial_key='spatial_norm', 
@@ -136,7 +173,8 @@ class DeepSpatial:
             mode=mode
         )
 
-        self.categories = pd.Index(self.dataset.label_encoder.classes_) 
+        self.categories = pd.Index(self.dataset.label_encoder.classes_)
+        self._precompute_uot_mappings(adata_list)
         self.train_loader = DataLoader(
             self.dataset, batch_size=batch_size, 
             shuffle=True, num_workers=num_workers
@@ -164,7 +202,8 @@ class DeepSpatial:
                     use_niche_encoder: bool = True,
                     niche_hidden_dim: int = 128,
                     niche_num_heads: int = 4,
-                    niche_dropout: float = 0.3):
+                    niche_dropout: float = 0.3,
+                    niche_refresh_steps: int = 5):
         """
         Instantiates the GiT network architecture and Flow Matching logic.
 
@@ -218,18 +257,21 @@ class DeepSpatial:
             "atol": atol,
             "rtol": rtol,
             "niche_dropout": niche_dropout,
+            "niche_refresh_steps": niche_refresh_steps,
         }
 
         model_niche_dim = niche_hidden_dim if use_niche_encoder else 0
+        niche_ntokens = 3 if use_niche_encoder else 1
         self.model = GiT(
             gene_dim=self.gene_dim,
             num_classes=self.num_classes,
             niche_hidden_dim=model_niche_dim,
+            niche_num_tokens=niche_ntokens,
             **self.model_config
         )
 
         if use_niche_encoder:
-            self.niche_encoder = NicheEncoder(
+            self.niche_encoder = MultiScaleNicheEncoder(
                 gene_dim=self.gene_dim,
                 hidden_dim=niche_hidden_dim,
                 num_heads=niche_num_heads,
@@ -501,23 +543,41 @@ class DeepSpatial:
         total_cells = int(target_cells)
 
         def extract(adata):
-            # Extract from normalized keys
             x = torch.tensor(adata.obsm['spatial_norm'], dtype=torch.float32, device=dev)
             z = adata.obs['z_norm'].iloc[0]
             g_arr = adata.X.toarray() if scipy.sparse.issparse(adata.X) else adata.X
             g = torch.tensor(g_arr, dtype=torch.float32, device=dev)
-            c_idx = torch.tensor(pd.Categorical(adata.obs[self.label_key], categories=self.categories).codes.astype(np.int64), device=dev)
-            # Niche reference data (optional, may not exist for old data)
-            if 'niche_neighbors' in adata.uns:
+            c_idx = torch.tensor(pd.Categorical(
+                adata.obs[self.label_key], categories=self.categories
+            ).codes.astype(np.int64), device=dev)
+
+            niche_ref = None
+            if 'niche_local_neighbors' in adata.uns:
+                niche_ref = {}
+                for scale, K in [('local', 8), ('mid', 32), ('global', 128)]:
+                    niche_ref[f'{scale}_neighbors'] = torch.tensor(
+                        adata.uns[f'niche_{scale}_neighbors'], dtype=torch.long, device=dev)
+                    niche_ref[f'{scale}_deltas'] = torch.tensor(
+                        adata.uns[f'niche_{scale}_deltas'], dtype=torch.float32, device=dev)
+                    niche_ref[f'{scale}_dists'] = torch.tensor(
+                        adata.uns[f'niche_{scale}_dists'], dtype=torch.float32, device=dev)
+                    dm = adata.uns.get(f'niche_{scale}_mask',
+                                       np.ones((adata.n_obs, K), dtype=bool))
+                    niche_ref[f'{scale}_mask'] = torch.tensor(dm, dtype=torch.bool, device=dev)
+                # UOT mappings
+                for kk in ('uot_g_to_next', 'uot_pos_to_next',
+                           'uot_g_to_prev', 'uot_pos_to_prev'):
+                    if kk in adata.uns:
+                        niche_ref[kk] = torch.tensor(adata.uns[kk], dtype=torch.float32,
+                                                     device=dev)
+            elif 'niche_neighbors' in adata.uns:
+                # Legacy single-scale fallback
                 nbr = torch.tensor(adata.uns['niche_neighbors'], dtype=torch.long, device=dev)
                 delta = torch.tensor(adata.uns['niche_deltas'], dtype=torch.float32, device=dev)
                 dist = torch.tensor(adata.uns['niche_dists'], dtype=torch.float32, device=dev)
-                msk = torch.tensor(np.ones((adata.n_obs, 32), dtype=bool), dtype=torch.bool, device=dev)
-                if 'niche_mask' in adata.uns:
-                    msk = torch.tensor(adata.uns['niche_mask'], dtype=torch.bool, device=dev)
+                msk = torch.tensor(adata.uns.get('niche_mask',
+                    np.ones((adata.n_obs, 32), dtype=bool)), dtype=torch.bool, device=dev)
                 niche_ref = {'neighbors': nbr, 'deltas': delta, 'dists': dist, 'mask': msk}
-            else:
-                niche_ref = None
             return x, z, g, c_idx, niche_ref
 
         x0, z0, g0, c0, niche_ref_0 = extract(adata0)
@@ -578,21 +638,62 @@ class DeepSpatial:
                     'delta_z': torch.full((len(chunk_parents), 1), z_end - z_start, device=dev)
                 }
 
-                # Compute niche token for parent cells
+                # Compute multi-scale niche + dynamic data for ODE refresh
                 if has_niche:
                     nref = niche_ref_0 if is_forward else niche_ref_1
-                    nbr_idx = nref['neighbors'][chunk_parents]              # (chunk, K)
-                    g_nbr = g_ref[nbr_idx]                                   # (chunk, K, gene_dim)
-                    delta_nbr = nref['deltas'][chunk_parents]               # (chunk, K, 2)
-                    dist_nbr = nref['dists'][chunk_parents]                 # (chunk, K)
-                    batch['niche_token'] = _niche_enc(
-                        g_center=g_ref[chunk_parents],
-                        pos_center=x_ref[chunk_parents],
-                        g_nbrs=g_nbr,
-                        delta_nbrs=delta_nbr,
-                        dist_nbrs=dist_nbr,
-                        mask_nbr=nref['mask'][chunk_parents],
-                    )
+                    has_dynamic = 'uot_g_to_next' in nref
+                    is_multiscale = 'local_neighbors' in nref
+
+                    if is_multiscale:
+                        uot_gk = 'uot_g_to_next' if is_forward else 'uot_g_to_prev'
+                        uot_pk = 'uot_pos_to_next' if is_forward else 'uot_pos_to_prev'
+                        has_dynamic = has_dynamic and uot_gk in nref
+
+                        def _get_scale(scale):
+                            nbr_idx = nref[f'{scale}_neighbors'][chunk_parents]
+                            return {
+                                'g_nbr': g_ref[nbr_idx],
+                                'delta': nref[f'{scale}_deltas'][chunk_parents],
+                                'dist': nref[f'{scale}_dists'][chunk_parents],
+                                'mask': nref[f'{scale}_mask'][chunk_parents],
+                            }
+                        sl, sm, sg = (_get_scale(s) for s in ('local', 'mid', 'global'))
+
+                        batch['niche_token'] = _niche_enc(
+                            g_center=g_ref[chunk_parents],
+                            pos_center=x_ref[chunk_parents],
+                            g_nbrs_local=sl['g_nbr'], delta_local=sl['delta'],
+                            dist_local=sl['dist'], mask_local=sl['mask'],
+                            g_nbrs_mid=sm['g_nbr'], delta_mid=sm['delta'],
+                            dist_mid=sm['dist'], mask_mid=sm['mask'],
+                            g_nbrs_global=sg['g_nbr'], delta_global=sg['delta'],
+                            dist_global=sg['dist'], mask_global=sg['mask'],
+                        )
+
+                        niche_nbr = {}
+                        for scale, s in [('local', sl), ('mid', sm), ('global', sg)]:
+                            niche_nbr[f'g_nbr_{scale}'] = s['g_nbr']
+                            niche_nbr[f'delta_nbr_{scale}'] = s['delta']
+                            niche_nbr[f'dist_nbr_{scale}'] = s['dist']
+                            niche_nbr[f'mask_nbr_{scale}'] = s['mask']
+                        if has_dynamic:
+                            gm = nref[uot_gk]
+                            pm = nref[uot_pk]
+                            for scale in ('local', 'mid', 'global'):
+                                nbr_idx = nref[f'{scale}_neighbors'][chunk_parents]
+                                niche_nbr[f'g_nbr_target_{scale}'] = gm[nbr_idx]
+                                niche_nbr[f'pos_nbr_target_{scale}'] = pm[nbr_idx]
+                        batch['niche_nbr_data'] = niche_nbr
+                    else:
+                        nbr_idx = nref['neighbors'][chunk_parents]
+                        batch['niche_token'] = _niche_enc(
+                            g_center=g_ref[chunk_parents],
+                            pos_center=x_ref[chunk_parents],
+                            g_nbrs=g_ref[nbr_idx],
+                            delta_nbrs=nref['deltas'][chunk_parents],
+                            dist_nbrs=nref['dists'][chunk_parents],
+                            mask_nbr=nref['mask'][chunk_parents],
+                        )
 
                 res = self.module.sample(batch, mode="ODE", steps=steps)
                 
