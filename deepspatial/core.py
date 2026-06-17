@@ -273,6 +273,7 @@ class DeepSpatial:
         if use_niche_encoder:
             self.niche_encoder = MultiScaleNicheEncoder(
                 gene_dim=self.gene_dim,
+                num_classes=self.num_classes,
                 hidden_dim=niche_hidden_dim,
                 num_heads=niche_num_heads,
             )
@@ -656,18 +657,24 @@ class DeepSpatial:
                                 'delta': nref[f'{scale}_deltas'][chunk_parents],
                                 'dist': nref[f'{scale}_dists'][chunk_parents],
                                 'mask': nref[f'{scale}_mask'][chunk_parents],
+                                'c_nbr': c_ref[nbr_idx],
                             }
                         sl, sm, sg = (_get_scale(s) for s in ('local', 'mid', 'global'))
+                        ct_center = c_ref[chunk_parents]
 
                         batch['niche_token'] = _niche_enc(
                             g_center=g_ref[chunk_parents],
                             pos_center=x_ref[chunk_parents],
+                            ct_center=ct_center,
                             g_nbrs_local=sl['g_nbr'], delta_local=sl['delta'],
                             dist_local=sl['dist'], mask_local=sl['mask'],
+                            ct_local=sl['c_nbr'],
                             g_nbrs_mid=sm['g_nbr'], delta_mid=sm['delta'],
                             dist_mid=sm['dist'], mask_mid=sm['mask'],
+                            ct_mid=sm['c_nbr'],
                             g_nbrs_global=sg['g_nbr'], delta_global=sg['delta'],
                             dist_global=sg['dist'], mask_global=sg['mask'],
+                            ct_global=sg['c_nbr'],
                         )
 
                         niche_nbr = {}
@@ -676,6 +683,7 @@ class DeepSpatial:
                             niche_nbr[f'delta_nbr_{scale}'] = s['delta']
                             niche_nbr[f'dist_nbr_{scale}'] = s['dist']
                             niche_nbr[f'mask_nbr_{scale}'] = s['mask']
+                            niche_nbr[f'c_nbr_{scale}'] = s['c_nbr']
                         if has_dynamic:
                             gm = nref[uot_gk]
                             pm = nref[uot_pk]

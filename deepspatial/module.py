@@ -94,40 +94,41 @@ class DeepSpatialModule(pl.LightningModule):
                 niche_token = None
             elif is_multiscale:
                 has_dynamic = 'g_nbr_target_local' in batch
-                t_3d = t[:, None, None, None]
+                t_3d = t[:, None, None]  # (B, 1, 1) — must be 3D to broadcast with (B, K, G)
+                ct_center = c0.argmax(dim=-1)  # (B,) source cell type index
 
-                def _interp(scale):
+                # Precompute shared center/residual with ct embedding
+                c_feat = self.niche_encoder._center_feat(gt, xt, ct_center)
+                h_ctr = self.niche_encoder.center_proj(c_feat)
+                residual = self.niche_encoder.res_proj(c_feat)
+
+                # Process scales one at a time to limit peak memory
+                tokens = []
+                for scale in ('local', 'mid', 'global'):
                     gs = batch[f'g_nbr_{scale}']
                     ds = batch[f'delta_nbr_{scale}']
                     mk = batch.get(f'mask_nbr_{scale}')
+                    cn = batch.get(f'c_nbr_{scale}')
                     if has_dynamic:
-                        gtgt = batch[f'g_nbr_target_{scale}']
-                        ptgt = batch[f'pos_nbr_target_{scale}']
-                        gi = (1 - t_3d) * gs + t_3d * gtgt
+                        gi = (1 - t_3d) * gs + t_3d * batch[f'g_nbr_target_{scale}']
                         pa = x0.unsqueeze(1) + ds
-                        pi = (1 - t_3d) * pa + t_3d * ptgt
+                        pi = (1 - t_3d) * pa + t_3d * batch[f'pos_nbr_target_{scale}']
                         di = pi - xt.unsqueeze(1)
                         dst = di.norm(dim=-1)
                     else:
                         gi = gs
-                        pa = x0.unsqueeze(1) + ds
-                        di = pa - xt.unsqueeze(1)
+                        di = (x0.unsqueeze(1) + ds) - xt.unsqueeze(1)
                         dst = di.norm(dim=-1)
-                    return gi, di, dst, mk
 
-                gl, dl, dstl, ml = _interp('local')
-                gm_, dm_, dstm, mm = _interp('mid')
-                gg, dg, dstg, mg = _interp('global')
+                    tok = self.niche_encoder.forward_scale(
+                        scale, None, None, ct_center,
+                        gi, di, dst, mk, cn,
+                        h_ctr=h_ctr, residual=residual,
+                    )
+                    tokens.append(tok)
+                    del gi, di, dst, gs, ds, mk, cn
 
-                niche_token = self.niche_encoder(
-                    g_center=gt, pos_center=xt,
-                    g_nbrs_local=gl, delta_local=dl,
-                    dist_local=dstl, mask_local=ml,
-                    g_nbrs_mid=gm_, delta_mid=dm_,
-                    dist_mid=dstm, mask_mid=mm,
-                    g_nbrs_global=gg, delta_global=dg,
-                    dist_global=dstg, mask_global=mg,
-                )
+                niche_token = torch.stack(tokens, dim=1)  # (B, 3, D)
             elif 'g_nbr' in batch:
                 niche_token = self.niche_encoder(
                     g_center=g0, pos_center=x0,
@@ -242,37 +243,36 @@ class DeepSpatialModule(pl.LightningModule):
                 tc = min(max(t_val, 0.0), 1.0)
 
                 if is_ms:
-                    def _ref(scale):
+                    ct_c = c0.argmax(dim=-1)  # (B,) source cell type (不变)
+                    c_feat = _niche_enc._center_feat(gt, xt, ct_c)
+                    h_ctr = _niche_enc.center_proj(c_feat)
+                    residual = _niche_enc.res_proj(c_feat)
+
+                    tokens = []
+                    for scale in ('local', 'mid', 'global'):
                         gs = niche_nbr_data[f'g_nbr_{scale}']
                         ds = niche_nbr_data[f'delta_nbr_{scale}']
                         mk = niche_nbr_data.get(f'mask_nbr_{scale}')
+                        cn = niche_nbr_data.get(f'c_nbr_{scale}')
                         if has_dyn:
-                            gtgt = niche_nbr_data[f'g_nbr_target_{scale}']
-                            ptgt = niche_nbr_data[f'pos_nbr_target_{scale}']
-                            gi = (1 - tc) * gs + tc * gtgt
+                            gi = (1 - tc) * gs + tc * niche_nbr_data[f'g_nbr_target_{scale}']
                             pa = x0.unsqueeze(1) + ds
-                            pi = (1 - tc) * pa + tc * ptgt
+                            pi = (1 - tc) * pa + tc * niche_nbr_data[f'pos_nbr_target_{scale}']
                             di = pi - xt.unsqueeze(1)
                             dst = di.norm(dim=-1)
                         else:
                             gi = gs
                             di = (x0.unsqueeze(1) + ds) - xt.unsqueeze(1)
                             dst = di.norm(dim=-1)
-                        return gi, di, dst, mk
+                        tok = _niche_enc.forward_scale(
+                            scale, None, None, ct_c,
+                            gi, di, dst, mk, cn,
+                            h_ctr=h_ctr, residual=residual,
+                        )
+                        tokens.append(tok)
+                        del gi, di, dst, gs, ds, mk, cn
 
-                    gl, dl, dstl, ml = _ref('local')
-                    gm_, dm_, dstm, mm = _ref('mid')
-                    gg, dg, dstg, mg = _ref('global')
-
-                    _niche[0] = _niche_enc(
-                        g_center=gt, pos_center=xt,
-                        g_nbrs_local=gl, delta_local=dl,
-                        dist_local=dstl, mask_local=ml,
-                        g_nbrs_mid=gm_, delta_mid=dm_,
-                        dist_mid=dstm, mask_mid=mm,
-                        g_nbrs_global=gg, delta_global=dg,
-                        dist_global=dstg, mask_global=mg,
-                    )
+                    _niche[0] = torch.stack(tokens, dim=1)
             _step_counter[0] += 1
 
             vx, vg, vc = self.ema_model(

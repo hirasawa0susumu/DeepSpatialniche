@@ -80,8 +80,10 @@ class DeepSpatialDataset(Dataset):
             'g_nbr_target_local': [],  'pos_nbr_target_local': [],
             'g_nbr_target_mid':   [],  'pos_nbr_target_mid': [],
             'g_nbr_target_global':[],  'pos_nbr_target_global': [],
+            # Neighbor cell type indices per scale (long)
+            'c_nbr_local': [], 'c_nbr_mid': [], 'c_nbr_global': [],
         }
-        
+
         self._build_trajectory_dataset()
         self._convert_to_tensors()
 
@@ -155,11 +157,15 @@ class DeepSpatialDataset(Dataset):
                         mk, np.ones((g0.shape[0], K_default), dtype=bool))[idx0]
                     g_tgt = g_mapped[nbr_idx]
                     pos_tgt = pos_mapped[nbr_idx]
-                    return g_nbr, delta, dist, msk, g_tgt, pos_tgt
+                    # Neighbor cell type indices
+                    raw_ct = self.adata_list[k].obs[self.label_key].astype(str).values
+                    c_nbr = self.label_encoder.transform(raw_ct[nbr_idx.ravel()])
+                    c_nbr = c_nbr.reshape(n_to_sample, -1).astype(np.int64)
+                    return g_nbr, delta, dist, msk, g_tgt, pos_tgt, c_nbr
 
-                (gl, dl, dstl, ml, gtl, ptl) = _extract_scale('local', 8)
-                (gm_, dm_, dstm, mm, gtm, ptm) = _extract_scale('mid', 32)
-                (gg, dg, dstg, mg, gtg, ptg) = _extract_scale('global', 128)
+                (gl, dl, dstl, ml, gtl, ptl, cl) = _extract_scale('local', 8)
+                (gm_, dm_, dstm, mm, gtm, ptm, cm) = _extract_scale('mid', 32)
+                (gg, dg, dstg, mg, gtg, ptg, cg) = _extract_scale('global', 128)
 
                 # Store endpoints
                 self.trajectory_pairs['x0'].append(x0[idx0])
@@ -189,6 +195,10 @@ class DeepSpatialDataset(Dataset):
                 self.trajectory_pairs['g_nbr_target_global'].append(gtg)
                 self.trajectory_pairs['pos_nbr_target_global'].append(ptg)
 
+                self.trajectory_pairs['c_nbr_local'].append(cl)
+                self.trajectory_pairs['c_nbr_mid'].append(cm)
+                self.trajectory_pairs['c_nbr_global'].append(cg)
+
                 self.trajectory_pairs['x1'].append(x1[idx1])
                 self.trajectory_pairs['g1'].append(g1[idx1])
                 self.trajectory_pairs['c1'].append(c1[idx1])
@@ -206,6 +216,8 @@ class DeepSpatialDataset(Dataset):
                 concatenated = np.concatenate(self.trajectory_pairs[key], axis=0)
                 if key.startswith('mask_nbr'):
                     self.tensors[key] = torch.from_numpy(concatenated).bool()
+                elif key.startswith('c_nbr'):
+                    self.tensors[key] = torch.from_numpy(concatenated).long()
                 else:
                     self.tensors[key] = torch.from_numpy(concatenated).float()
 

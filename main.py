@@ -71,7 +71,6 @@ model.build_model(
     use_niche_encoder=True,
     niche_hidden_dim=256,
     niche_num_heads=4,
-    niche_num_tokens=4,
     niche_dropout=dropout_rate,
     niche_refresh_steps=5
 )
