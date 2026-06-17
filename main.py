@@ -24,7 +24,7 @@ from deepspatial.vis_utils import (
 # Set this to your local true-3D reference file
 gt_path = '/root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad'
 adata_gt = ad.read_h5ad(gt_path)
-dropout_rate = 0.3
+dropout_rate = 0.2
 print("dropout_rate:", dropout_rate)
 # Extract 2D slice inputs from true 3D data using segmented Z ranges
 z_coords = adata_gt.obsm['spatial'][:, 2]
