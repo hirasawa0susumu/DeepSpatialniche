@@ -85,7 +85,7 @@ model.fit(
 
 adata_3d = model.reconstruct_full_volume(
     adata_list,
-    thickness=1,
+    thickness=2,
 
 )
 
