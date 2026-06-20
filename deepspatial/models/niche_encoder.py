@@ -200,7 +200,6 @@ class MultiScaleNicheEncoder(nn.Module):
 
     def _encode(self, g_nbrs, delta_nbrs, dist_nbrs, ct_nbrs):
         ct_emb = self.ct_emb(ct_nbrs)
-        print("awdwa", g_nbrs.shape, delta_nbrs.shape, dist_nbrs.shape, ct_emb.shape)
         feat = torch.cat([g_nbrs, delta_nbrs, dist_nbrs.unsqueeze(-1), ct_emb], dim=-1)
         return self.nbr_encoder(feat)
 
@@ -219,8 +218,9 @@ class MultiScaleNicheEncoder(nn.Module):
 
         if scale == 'global':
             g_pooled = g_nbrs.mean(dim=1)  # (B, G)
-            ct_hist = torch.zeros(g_center.shape[0], self.num_classes,
-                                  device=g_center.device)
+            B = g_nbrs.shape[0]
+            ct_hist = torch.zeros(B, self.num_classes,
+                                  device=g_nbrs.device)
             ct_hist.scatter_add_(1, ct_nbrs,
                                  torch.ones_like(ct_nbrs, dtype=torch.float32))
             ct_hist = ct_hist / (ct_hist.sum(dim=1, keepdims=True) + 1e-8)

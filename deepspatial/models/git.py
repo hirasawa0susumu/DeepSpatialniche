@@ -154,15 +154,19 @@ class GiT(nn.Module):
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
-        nn.init.constant_(self.x_head.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.x_head.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.x_head.linear.weight, 0)
-        nn.init.constant_(self.x_head.linear.bias, 0)
+        # Output heads: Xavier (NOT zero-init).  adaLN-Zero on output heads
+        # makes flow-matching velocity prediction nearly untrainable on small-
+        # displacement spatial data because gradients through zero-initialised
+        # final layers are too weak to escape the flat region.
+        nn.init.xavier_uniform_(self.x_head.adaLN_modulation[-1].weight)
+        nn.init.zeros_(self.x_head.adaLN_modulation[-1].bias)
+        nn.init.xavier_uniform_(self.x_head.linear.weight)
+        nn.init.zeros_(self.x_head.linear.bias)
 
-        nn.init.constant_(self.g_head.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.g_head.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.g_head.linear.weight, 0)
-        nn.init.constant_(self.g_head.linear.bias, 0)
+        nn.init.xavier_uniform_(self.g_head.adaLN_modulation[-1].weight)
+        nn.init.zeros_(self.g_head.adaLN_modulation[-1].bias)
+        nn.init.xavier_uniform_(self.g_head.linear.weight)
+        nn.init.zeros_(self.g_head.linear.bias)
 
 
     def forward(self, xt, gt, t, zt, delta_z, ct, niche_token=None):

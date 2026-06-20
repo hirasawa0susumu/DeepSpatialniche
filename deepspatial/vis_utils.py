@@ -895,3 +895,77 @@ def interactive_spatial_range_widget(
         display(container)
         return None
     return container
+
+
+# ==============================================================================
+# ODE Trajectory Animation
+# ==============================================================================
+
+def animate_trajectory(
+    x_traj,                # (steps, N, 2) torch.Tensor or numpy array (normalized)
+    cell_types=None,       # (N,) int   cell type labels
+    adata0=None,           # AnnData for source reference (optional)
+    adata1=None,           # AnnData for target reference (optional)
+    spatial_stats=None,    # dict with x_min, x_range, y_min, y_range
+    frame_interval: int = 200,   # ms between frames
+    point_size: float = 1.0,
+    title: str = "ODE Trajectory",
+    save_path: str = None,       # e.g. 'trajectory.gif'
+):
+    """Animate ODE integration trajectory step by step.
+
+    Usage:
+        animate_trajectory(res['x_traj'].cpu().numpy(),
+                          cell_types=ct_labels,
+                          save_path='trajectory.gif')
+    """
+    import matplotlib.animation as animation
+
+    if hasattr(x_traj, 'cpu'):
+        x_traj = x_traj.cpu().numpy().copy()
+    else:
+        x_traj = x_traj.copy()
+    steps, N, _ = x_traj.shape
+
+    # Restore trajectory to physical space if stats provided
+    if spatial_stats is not None:
+        x_traj[:, :, 0] = x_traj[:, :, 0] * spatial_stats['x_range'] + spatial_stats['x_min']
+        x_traj[:, :, 1] = x_traj[:, :, 1] * spatial_stats['y_range'] + spatial_stats['y_min']
+
+    cmap = plt.cm.tab20 if cell_types is None else None
+    colors = cell_types if cell_types is not None else np.zeros(N)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    fig.suptitle(title, fontsize=11)
+
+    def _plot_ref(adata, color, marker, label, alpha=0.3):
+        if adata is not None:
+            xy = adata.obsm.get('spatial', adata.obsm.get('spatial_norm'))
+            if xy is not None:
+                # Reference is already in physical space
+                ax.scatter(xy[:, 0], xy[:, 1], c=color, s=0.5,
+                           alpha=alpha, marker=marker, label=label, zorder=0)
+
+    _plot_ref(adata0, 'red', 's', 'source')
+    _plot_ref(adata1, 'blue', '^', 'target')
+    sc = ax.scatter(x_traj[0, :, 0], x_traj[0, :, 1],
+                    c=colors, cmap=cmap, s=point_size, zorder=1)
+    ax.set_aspect('equal')
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.legend(loc='upper right', markerscale=5, fontsize=7)
+
+    def update(frame):
+        sc.set_offsets(x_traj[frame, :, :2])
+        ax.set_title(f"step {frame}/{steps-1}  t={frame/(steps-1):.2f}", fontsize=10)
+        return [sc]
+
+    ani = animation.FuncAnimation(
+        fig, update, frames=range(0, steps, max(1, steps // 50)),
+        interval=frame_interval, blit=True, repeat=True)
+
+    if save_path:
+        ani.save(save_path, writer='pillow', fps=1000 // frame_interval)
+        print(f"Saved to {save_path}")
+
+    plt.show()
+    return ani

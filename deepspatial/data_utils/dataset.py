@@ -15,16 +15,17 @@ class DeepSpatialDataset(Dataset):
     Constructs cross-slice cell pairs using Unbalanced Optimal Transport (UOT) 
     to provide continuous training samples for Flow Matching.
     """
-    def __init__(self, 
-                 adata_list: list, 
-                 spatial_key: str = 'spatial_norm', 
+    def __init__(self,
+                 adata_list: list,
+                 spatial_key: str = 'spatial_norm',
                  z_key: str = 'z_norm',
                  label_key: str = 'cell_class',
-                 n_samples_base: int = 50000, 
+                 n_samples_base: int = 50000,
                  alpha_spatial: float = 0.5,
-                 uot_reg: float = 0.8, 
+                 uot_reg: float = 0.8,
                  uot_tau: float = 0.05,
-                 mode: str = 'fit'):
+                 mode: str = 'fit',
+                 use_niche: bool = True):
         """
         Args:
             adata_list: List of AnnData objects.
@@ -45,6 +46,7 @@ class DeepSpatialDataset(Dataset):
         self.alpha_spatial = alpha_spatial
         self.uot_reg = uot_reg
         self.uot_tau = uot_tau
+        self.use_niche = use_niche
 
         # --- 1. Global Label Encoding ---
         self.label_encoder = LabelEncoder()
@@ -61,8 +63,9 @@ class DeepSpatialDataset(Dataset):
             self.num_classes = 1
             self.id2label = {0: "unknown"}
 
-        # Precompute multi-scale spatial KNN neighbors for niche encoding
-        precompute_multiscale_neighbors(adata_list, spatial_key=spatial_key)
+        # Precompute multi-scale spatial KNN neighbors (only if niche is used)
+        if use_niche:
+            precompute_multiscale_neighbors(adata_list, spatial_key=spatial_key)
 
         if mode != 'fit':
             self.adata_list = self.adata_list[:2]
@@ -139,65 +142,61 @@ class DeepSpatialDataset(Dataset):
                 idx_flat = np.random.choice(len(pi_flat), size=n_to_sample, p=pi_prob, replace=True)
                 idx0, idx1 = np.unravel_index(idx_flat, pi.shape)
 
-                # --- UOT target mapping (cell-level, shared across scales) ---
-                pi_norm = pi / (pi.sum(axis=1, keepdims=True) + 1e-16)
-                g_mapped = pi_norm @ g1   # (N0, G)
-                pos_mapped = pi_norm @ x1  # (N0, 2)
-
-                def _extract_scale(scale_key, K_default):
-                    nk = f'niche_{scale_key}_neighbors'
-                    dk = f'niche_{scale_key}_deltas'
-                    dsk = f'niche_{scale_key}_dists'
-                    mk = f'niche_{scale_key}_mask'
-                    nbr_idx = self.adata_list[k].uns[nk][idx0]
-                    g_nbr = g0[nbr_idx]
-                    delta = self.adata_list[k].uns[dk][idx0]
-                    dist = self.adata_list[k].uns[dsk][idx0]
-                    msk = self.adata_list[k].uns.get(
-                        mk, np.ones((g0.shape[0], K_default), dtype=bool))[idx0]
-                    g_tgt = g_mapped[nbr_idx]
-                    pos_tgt = pos_mapped[nbr_idx]
-                    # Neighbor cell type indices
-                    raw_ct = self.adata_list[k].obs[self.label_key].astype(str).values
-                    c_nbr = self.label_encoder.transform(raw_ct[nbr_idx.ravel()])
-                    c_nbr = c_nbr.reshape(n_to_sample, -1).astype(np.int64)
-                    return g_nbr, delta, dist, msk, g_tgt, pos_tgt, c_nbr
-
-                (gl, dl, dstl, ml, gtl, ptl, cl) = _extract_scale('local', 8)
-                (gm_, dm_, dstm, mm, gtm, ptm, cm) = _extract_scale('mid', 32)
-                (gg, dg, dstg, mg, gtg, ptg, cg) = _extract_scale('global', 128)
-
-                # Store endpoints
+                # Store endpoints (always)
                 self.trajectory_pairs['x0'].append(x0[idx0])
                 self.trajectory_pairs['g0'].append(g0[idx0])
                 self.trajectory_pairs['c0'].append(c0[idx0])
                 self.trajectory_pairs['z0'].append(np.full((n_to_sample, 1), z0, dtype=np.float32))
 
-                # Store multi-scale source niche
-                self.trajectory_pairs['g_nbr_local'].append(gl)
-                self.trajectory_pairs['delta_nbr_local'].append(dl)
-                self.trajectory_pairs['dist_nbr_local'].append(dstl)
-                self.trajectory_pairs['mask_nbr_local'].append(ml)
-                self.trajectory_pairs['g_nbr_mid'].append(gm_)
-                self.trajectory_pairs['delta_nbr_mid'].append(dm_)
-                self.trajectory_pairs['dist_nbr_mid'].append(dstm)
-                self.trajectory_pairs['mask_nbr_mid'].append(mm)
-                self.trajectory_pairs['g_nbr_global'].append(gg)
-                self.trajectory_pairs['delta_nbr_global'].append(dg)
-                self.trajectory_pairs['dist_nbr_global'].append(dstg)
-                self.trajectory_pairs['mask_nbr_global'].append(mg)
+                # --- Niche extraction (only if niche is used) ---
+                if self.use_niche:
+                    pi_norm = pi / (pi.sum(axis=1, keepdims=True) + 1e-16)
+                    g_mapped = pi_norm @ g1   # (N0, G)
+                    pos_mapped = pi_norm @ x1  # (N0, 2)
 
-                # Store dynamic target-mapped data
-                self.trajectory_pairs['g_nbr_target_local'].append(gtl)
-                self.trajectory_pairs['pos_nbr_target_local'].append(ptl)
-                self.trajectory_pairs['g_nbr_target_mid'].append(gtm)
-                self.trajectory_pairs['pos_nbr_target_mid'].append(ptm)
-                self.trajectory_pairs['g_nbr_target_global'].append(gtg)
-                self.trajectory_pairs['pos_nbr_target_global'].append(ptg)
+                    def _extract_scale(scale_key, K_default):
+                        nk = f'niche_{scale_key}_neighbors'
+                        dk = f'niche_{scale_key}_deltas'
+                        dsk = f'niche_{scale_key}_dists'
+                        mk = f'niche_{scale_key}_mask'
+                        nbr_idx = self.adata_list[k].uns[nk][idx0]
+                        g_nbr = g0[nbr_idx]
+                        delta = self.adata_list[k].uns[dk][idx0]
+                        dist = self.adata_list[k].uns[dsk][idx0]
+                        msk = self.adata_list[k].uns.get(
+                            mk, np.ones((g0.shape[0], K_default), dtype=bool))[idx0]
+                        g_tgt = g_mapped[nbr_idx]
+                        pos_tgt = pos_mapped[nbr_idx]
+                        raw_ct = self.adata_list[k].obs[self.label_key].astype(str).values
+                        c_nbr = self.label_encoder.transform(raw_ct[nbr_idx.ravel()])
+                        c_nbr = c_nbr.reshape(n_to_sample, -1).astype(np.int64)
+                        return g_nbr, delta, dist, msk, g_tgt, pos_tgt, c_nbr
 
-                self.trajectory_pairs['c_nbr_local'].append(cl)
-                self.trajectory_pairs['c_nbr_mid'].append(cm)
-                self.trajectory_pairs['c_nbr_global'].append(cg)
+                    (gl, dl, dstl, ml, gtl, ptl, cl) = _extract_scale('local', 8)
+                    (gm_, dm_, dstm, mm, gtm, ptm, cm) = _extract_scale('mid', 32)
+                    (gg, dg, dstg, mg, gtg, ptg, cg) = _extract_scale('global', 128)
+
+                    self.trajectory_pairs['g_nbr_local'].append(gl)
+                    self.trajectory_pairs['delta_nbr_local'].append(dl)
+                    self.trajectory_pairs['dist_nbr_local'].append(dstl)
+                    self.trajectory_pairs['mask_nbr_local'].append(ml)
+                    self.trajectory_pairs['g_nbr_mid'].append(gm_)
+                    self.trajectory_pairs['delta_nbr_mid'].append(dm_)
+                    self.trajectory_pairs['dist_nbr_mid'].append(dstm)
+                    self.trajectory_pairs['mask_nbr_mid'].append(mm)
+                    self.trajectory_pairs['g_nbr_global'].append(gg)
+                    self.trajectory_pairs['delta_nbr_global'].append(dg)
+                    self.trajectory_pairs['dist_nbr_global'].append(dstg)
+                    self.trajectory_pairs['mask_nbr_global'].append(mg)
+                    self.trajectory_pairs['g_nbr_target_local'].append(gtl)
+                    self.trajectory_pairs['pos_nbr_target_local'].append(ptl)
+                    self.trajectory_pairs['g_nbr_target_mid'].append(gtm)
+                    self.trajectory_pairs['pos_nbr_target_mid'].append(ptm)
+                    self.trajectory_pairs['g_nbr_target_global'].append(gtg)
+                    self.trajectory_pairs['pos_nbr_target_global'].append(ptg)
+                    self.trajectory_pairs['c_nbr_local'].append(cl)
+                    self.trajectory_pairs['c_nbr_mid'].append(cm)
+                    self.trajectory_pairs['c_nbr_global'].append(cg)
 
                 self.trajectory_pairs['x1'].append(x1[idx1])
                 self.trajectory_pairs['g1'].append(g1[idx1])

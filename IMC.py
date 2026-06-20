@@ -54,6 +54,7 @@ model.setup_data(
     z_key='z_coord',
     label_key=label_key,
     batch_size=2048,
+    use_niche=True
 )
 
 # Build model: configure architecture hyperparameters
@@ -65,7 +66,7 @@ model.build_model(
     use_niche_encoder=True,
     niche_hidden_dim=256,
     niche_num_heads=4,
-    niche_dropout=0.2,
+    niche_dropout=0.3,
     niche_refresh_steps=5
 )
 
@@ -75,18 +76,23 @@ devices = [0] if accelerator == 'gpu' else 1
 print('Training accelerator:', accelerator)
 
 model.fit(
-    max_epochs=10,
+    max_epochs=8,
     save_dir="/root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/deepspatial_run_imc1",
     accelerator=accelerator,
     devices=devices,
-    save_ckpt=True
+    save_ckpt=True,
 )
 
-adata_3d = model.reconstruct_full_volume(
-    adata_list,
-    thickness=2,
+# model.load_checkpoint("/root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/deepspatial_run_imc1/deepspatial-epoch=135-loss=0.0082.ckpt")
 
-)
+# adata_3d = model.reconstruct_full_volume(
+#     adata_list,
+#     thickness=2,
+#
+# )
+
+adata_slice = model.reconstruct_slice_at(adata_list[7], adata_list[8], target_t=0.5)
 
 os.makedirs("output", exist_ok=True)
-adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout_multidyna.h5ad")
+# adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout_multidyna_new.h5ad")
+adata_slice.write_h5ad("output/imc_10.h5ad")

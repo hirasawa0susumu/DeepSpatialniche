@@ -15,7 +15,7 @@ from sklearn.neighbors import NearestNeighbors
 # config
 # ═══════════════════════════════════════════════════════════════════════════
 
-PATH_A = "/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_imc_breastcancer_1.h5ad"
+PATH_A = "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_imc_breastcancer_heldout_multidyna.h5ad"
 PATH_B = "/root/autodl-tmp/wangjiaxiang/Datas/imc_human_breastcancer/imc_human_breastcancer/imc_10.h5ad"
 
 

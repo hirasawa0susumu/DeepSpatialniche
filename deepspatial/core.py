@@ -126,18 +126,19 @@ class DeepSpatial:
             a1.uns['uot_g_to_prev'] = (pi_rev @ g0).astype(np.float32)
             a1.uns['uot_pos_to_prev'] = (pi_rev @ x0).astype(np.float32)
 
-    def setup_data(self, 
-                   adata_list: list[ad.AnnData], 
+    def setup_data(self,
+                   adata_list: list[ad.AnnData],
                    spatial_key: str = 'spatial',
                    z_key: str = 'z_coord',
                    label_key: str = 'cell_class',
-                   batch_size: int = 128, 
+                   batch_size: int = 128,
                    num_workers: int = 4,
                    n_samples_base: int = 50000,
                    alpha_spatial: float = 0.5,
                    uot_reg: float = 0.8,
                    uot_tau: float = 0.05,
-                   mode: str = 'fit'):
+                   mode: str = 'fit',
+                   use_niche: bool = True):
         """
         Prepares the data pipeline and calculates physical normalization statistics.
         
@@ -162,19 +163,21 @@ class DeepSpatial:
         self._normalize_spatial(adata_list)
 
         self.dataset = DeepSpatialDataset(
-            adata_list=adata_list, 
-            spatial_key='spatial_norm', 
+            adata_list=adata_list,
+            spatial_key='spatial_norm',
             z_key='z_norm',
             label_key=label_key,
             n_samples_base=n_samples_base,
             alpha_spatial=alpha_spatial,
             uot_reg=uot_reg,
             uot_tau=uot_tau,
-            mode=mode
+            mode=mode,
+            use_niche=use_niche,
         )
 
         self.categories = pd.Index(self.dataset.label_encoder.classes_)
-        self._precompute_uot_mappings(adata_list)
+        if use_niche:
+            self._precompute_uot_mappings(adata_list)
         self.train_loader = DataLoader(
             self.dataset, batch_size=batch_size, 
             shuffle=True, num_workers=num_workers
@@ -465,6 +468,175 @@ class DeepSpatial:
         # Assemble and restore to physical coordinates
         adata_segment = self._assemble_fast_anndata(adata0, adata1, mix_data)
         return self._restore_3d_physical_coords(adata_segment)
+
+    @torch.no_grad()
+    def reconstruct_slice_at(self,
+                             adata0: ad.AnnData,
+                             adata1: ad.AnnData,
+                             target_t: float | None = None,
+                             target_z: float | None = None,
+                             z_key = None,
+                             steps: int = 100,
+                             chunk_size: int = 2048,
+                             device: str = "auto") -> ad.AnnData:
+        """Generate a single 2D slice at a specific Z-depth between two slices.
+
+        Args:
+            adata0, adata1: Source/target AnnData slices.
+            target_t: Normalized position ∈ [0,1]. 0=adata0, 1=adata1.
+            target_z: Physical Z coordinate (μm). Takes precedence if both given.
+            steps: ODE integration steps. Total range is always 0→1.
+            chunk_size: Batch size for VRAM management.
+            device: Computing device.
+
+        Returns:
+            AnnData: slice at target depth, with 'spatial' (XY) and 'z_coord'.
+        """
+        if target_z is not None:
+            z0_phys = adata0.obs[z_key].iloc[0]
+            z1_phys = adata1.obs[z_key].iloc[0]
+            t = (target_z - z0_phys) / (z1_phys - z0_phys + 1e-8)
+        elif target_t is not None:
+            t = target_t
+        else:
+            t = 0.5
+        t = float(np.clip(t, 0.0, 1.0))
+
+        if device == "auto":
+            dev = self.module.device if self.module.device.type != 'cpu' else \
+                  torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            dev = torch.device(device)
+        if self.module.device != dev:
+            self.module.to(dev)
+        self.module.eval()
+
+        # Extract slice data
+        (x0, z0, g0, c0, x1, z1, g1, c1,
+         _, _, niche_ref_0, niche_ref_1) = self._setup_and_extract(
+            adata0, adata1, thickness=1.0, dev=dev)  # thickness unused here
+        B = x0.shape[0]
+
+        has_niche = (niche_ref_0 is not None and niche_ref_1 is not None and
+                     self.niche_encoder is not None)
+        _niche_enc = (
+            self.module.ema_niche_encoder
+            if getattr(self.module, 'ema_niche_encoder', None) is not None
+            else self.niche_encoder
+        )
+        is_multiscale = has_niche and 'local_neighbors' in niche_ref_0
+
+        final_x = torch.zeros((B, 2), device=dev)
+        final_g = torch.zeros((B, g0.shape[1]), device=dev)
+        final_c = torch.zeros(B, device=dev, dtype=torch.long)
+
+        c_onehot = torch.nn.functional.one_hot(c0, num_classes=self.num_classes).float()
+
+        for i in range(0, B, chunk_size):
+            end = min(i + chunk_size, B)
+            chunk = slice(i, end)
+
+            batch = {
+                'x0': x0[chunk], 'g0': g0[chunk], 'c0': c_onehot[chunk],
+                'z0': torch.full((end - i, 1), z0, device=dev),
+                'z1': torch.full((end - i, 1), z1, device=dev),
+                'delta_z': torch.full((end - i, 1), z1 - z0, device=dev),
+            }
+            print("1")
+            if has_niche:
+                nref = niche_ref_0  # always forward (adata0 → adata1)
+                has_dyn = 'uot_g_to_next' in nref
+                if is_multiscale:
+                    def _gs(scale):
+                        nbr_idx = nref[f'{scale}_neighbors'][chunk]
+                        return {
+                            'g_nbr': g0[nbr_idx],
+                            'delta': nref[f'{scale}_deltas'][chunk],
+                            'dist': nref[f'{scale}_dists'][chunk],
+                            'mask': nref[f'{scale}_mask'][chunk],
+                            'c_nbr': c0[nbr_idx],
+                        }
+                    sl, sm, sg = _gs('local'), _gs('mid'), _gs('global')
+                    ct_c = c0[chunk]
+                    batch['niche_token'] = _niche_enc(
+                        g_center=g0[chunk], pos_center=x0[chunk], ct_center=ct_c,
+                        g_nbrs_local=sl['g_nbr'], delta_local=sl['delta'],
+                        dist_local=sl['dist'], mask_local=sl['mask'], ct_local=sl['c_nbr'],
+                        g_nbrs_mid=sm['g_nbr'], delta_mid=sm['delta'],
+                        dist_mid=sm['dist'], mask_mid=sm['mask'], ct_mid=sm['c_nbr'],
+                        g_nbrs_global=sg['g_nbr'], delta_global=sg['delta'],
+                        dist_global=sg['dist'], mask_global=sg['mask'], ct_global=sg['c_nbr'],
+                    )
+                    nn = {}
+                    for scale, s in [('local', sl), ('mid', sm), ('global', sg)]:
+                        nn[f'g_nbr_{scale}'] = s['g_nbr']
+                        nn[f'delta_nbr_{scale}'] = s['delta']
+                        nn[f'dist_nbr_{scale}'] = s['dist']
+                        nn[f'mask_nbr_{scale}'] = s['mask']
+                        nn[f'c_nbr_{scale}'] = s['c_nbr']
+                    if has_dyn:
+                        gm = nref['uot_g_to_next']
+                        pm = nref['uot_pos_to_next']
+                        for scale in ('local', 'mid', 'global'):
+                            nbr_idx = nref[f'{scale}_neighbors'][chunk]
+                            nn[f'g_nbr_target_{scale}'] = gm[nbr_idx]
+                            nn[f'pos_nbr_target_{scale}'] = pm[nbr_idx]
+                    batch['niche_nbr_data'] = nn
+                else:
+                    nbr_idx = nref['neighbors'][chunk]
+                    batch['niche_token'] = _niche_enc(
+                        g_center=g0[chunk], pos_center=x0[chunk],
+                        g_nbrs=g0[nbr_idx], delta_nbrs=nref['deltas'][chunk],
+                        dist_nbrs=nref['dists'][chunk], mask_nbr=nref['mask'][chunk],
+                    )
+
+            res = self.module.sample(batch, mode="ODE", steps=steps)
+            # Debug: check if velocity is non-zero
+            if i == 0:
+                x_traj = res['x_traj']
+                g_traj = res['g_traj']
+                print(x_traj.shape, g_traj.shape, "x and g shape")
+                traj = res['x_traj']  # [T,B,2]
+
+                print(
+                    (traj[-1] - traj[0]).norm(dim=-1).mean()
+                )
+                print(f"[reconstruct_slice_at] x0 mean={x_traj[0].mean().item():.4f} "
+                      f"x_final mean={x_traj[-1].mean().item():.4f} "
+                      f"x_delta max={abs(x_traj[-1] - x_traj[0]).max().item():.6f}",
+                      flush=True)
+                print(f"[reconstruct_slice_at] g0 mean={g_traj[0].mean().item():.4f} "
+                      f"g_final mean={g_traj[-1].mean().item():.4f} "
+                      f"g_delta max={abs(g_traj[-1] - g_traj[0]).max().item():.6f}",
+                      flush=True)
+            step_idx = int(round(t * (steps - 1)))
+            step_idx = max(0, min(step_idx, steps - 1))
+            print(step_idx, "step_idx")
+            final_x[chunk] = res['x_traj'][step_idx]
+            final_g[chunk] = res['g_traj'][step_idx]
+            final_c[chunk] = res['c_traj_discrete'][step_idx]
+            del res, batch
+            torch.cuda.empty_cache()
+
+        # Assemble AnnData
+        obs = adata0.obs.copy()
+        obs[self.z_key] = (target_z if target_z is not None
+                           else t * (adata1.obs[self.z_key].iloc[0] - adata0.obs[self.z_key].iloc[0])
+                           + adata0.obs[self.z_key].iloc[0])
+        obs[self.label_key] = pd.Categorical.from_codes(
+            final_c.cpu().numpy(), categories=self.categories)
+
+        from scipy.sparse import csr_matrix
+        g_np = final_g.cpu().numpy()
+        g_sparse = csr_matrix(g_np)
+
+        result = ad.AnnData(
+            X=g_sparse, obs=obs, var=adata0.var.copy(),
+            obsm={self.spatial_key: final_x.cpu().numpy()},
+        )
+        ress = self._restore_3d_physical_coords(result)
+        print(abs(ress.obsm["spatial"] - adata0.obsm["spatial"]).max().item())
+        return ress
 
     @torch.no_grad()
     def reconstruct_full_volume(self,
