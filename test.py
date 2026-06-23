@@ -15,7 +15,7 @@ ad3 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspa
 # print(ad_1.shape)
 print(ad1.obs["spatial_z"].unique())
 mid = 200
-thick = 1
+thick = 2
 mask1 = (ad1.obs["z_coord"] >= mid - thick) & (ad1.obs["z_coord"] <= mid +
                                            thick)
 mask2 = (ad3.obs["z_coord"] >= mid - thick) & (ad3.obs["z_coord"] <= mid +
@@ -23,6 +23,7 @@ mask2 = (ad3.obs["z_coord"] >= mid - thick) & (ad3.obs["z_coord"] <= mid +
 cells1 = ad1[mask1]
 cells1.obs["z_coord"][:] = mid
 print(f"slice : Z=20μm ±{thick} → {cells1.n_obs} cells")
+cells1 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/dsgt_main/output/imc10_recon_dsgt.h5ad")
 cells2 = ad3[mask2]
 cells2.obs["z_coord"][:] = mid
 print(f"slice : Z=20μm ±{thick} → {cells2.n_obs} cells")

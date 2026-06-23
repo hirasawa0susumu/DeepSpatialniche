@@ -88,6 +88,7 @@ adata_3d = model.reconstruct_full_volume(
     thickness=2,
 
 )
-
+adata_slice = model.reconstruct_slice_at(adata_list[7], adata_list[8], target_t=0.5)
 os.makedirs("output", exist_ok=True)
 adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout.h5ad")
+adata_slice.write_h5ad("output/imc10_re.h5ad")
