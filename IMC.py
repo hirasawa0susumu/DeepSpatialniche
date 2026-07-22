@@ -48,47 +48,68 @@ if label_key is None:
     raise ValueError(f'No valid label key found. Tried: {candidate_label_keys}')
 print('Using label key:', label_key)
 
-model.setup_data(
-    adata_list=adata_list,
-    spatial_key='spatial',
-    z_key='z_coord',
-    label_key=label_key,
-    batch_size=2048,
+# model.setup_data(
+#     adata_list=adata_list,
+#     spatial_key='spatial',
+#     z_key='z_coord',
+#     label_key=label_key,
+#     batch_size=2048,
+# )
+#
+# # Build model: configure architecture hyperparameters
+# model.build_model(
+#     patch_size=8,
+#     hidden_size=256,
+#     depth=6,
+#     lr=2e-4,
+#     use_niche_encoder=True,
+#     niche_hidden_dim=256,
+#     niche_num_heads=4,
+#     niche_num_tokens=4,
+#     niche_dropout=0.3,
+#     niche_refresh_steps=5
+# )
+#
+# # Train: set checkpoint directory and device options
+# accelerator = 'gpu' if torch.cuda.is_available() else 'cpu'
+# devices = [0] if accelerator == 'gpu' else 1
+# print('Training accelerator:', accelerator)
+
+# model.fit(
+#     max_epochs=10,
+#     save_dir="/root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/deepspatial_run_imc1",
+#     accelerator=accelerator,
+#     devices=devices,
+#     save_ckpt=True
+# )
+#
+# adata_3d = model.reconstruct_full_volume(
+#     adata_list,
+#     thickness=2,
+#
+# )
+# adata_slice = model.reconstruct_slice_at(adata_list[7], adata_list[8], target_t=0.5)
+# os.makedirs("output", exist_ok=True)
+# adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout.h5ad")
+# adata_slice.write_h5ad("output/imc10_re.h5ad")
+
+
+
+adata_3d = sc.read_h5ad("/root/autodl-tmp/wangjiaxiang/dsgt_main/output/imc_full_dsgt.h5ad")
+label_candidates = ['cell_type', 'cell_class', 'annotation', 'Harmony_labels']
+vis_label = next((k for k in label_candidates if k in adata_3d.obs.columns), None)
+if vis_label is None:
+    raise ValueError(f'No visualization label column found. Tried: {label_candidates}')
+
+interactive_3d_labels(
+    adata_3d,
+    color_col=vis_label,
+    title=f'DeepSpatial IMC Reconstruction ({vis_label})',
+    width=1000,
+    height=1000,
 )
 
-# Build model: configure architecture hyperparameters
-model.build_model(
-    patch_size=8,
-    hidden_size=256,
-    depth=6,
-    lr=2e-4,
-    use_niche_encoder=True,
-    niche_hidden_dim=256,
-    niche_num_heads=4,
-    niche_num_tokens=4,
-    niche_dropout=0.3,
-    niche_refresh_steps=5
-)
-
-# Train: set checkpoint directory and device options
-accelerator = 'gpu' if torch.cuda.is_available() else 'cpu'
-devices = [0] if accelerator == 'gpu' else 1
-print('Training accelerator:', accelerator)
-
-model.fit(
-    max_epochs=10,
-    save_dir="/root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/deepspatial_run_imc1",
-    accelerator=accelerator,
-    devices=devices,
-    save_ckpt=True
-)
-
-adata_3d = model.reconstruct_full_volume(
-    adata_list,
-    thickness=2,
-
-)
-adata_slice = model.reconstruct_slice_at(adata_list[7], adata_list[8], target_t=0.5)
-os.makedirs("output", exist_ok=True)
-adata_3d.write_h5ad("output/deepspatial_3d_imc_breastcancer_heldout.h5ad")
-adata_slice.write_h5ad("output/imc10_re.h5ad")
+label_candidates = ['cell_type', 'cell_class', 'annotation', 'Harmony_labels']
+vis_label = next((k for k in label_candidates if k in adata_3d.obs.columns), None)
+plot_orthogonal_projections(adata_3d, color_col=vis_label)
+plot_z_distribution(adata_3d, color_col=vis_label, smooth_sigma=2)

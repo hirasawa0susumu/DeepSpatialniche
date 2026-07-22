@@ -5,7 +5,7 @@ _PALETTE = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
             '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf',
             '#393b79','#637939','#8c6d31','#843c39','#7b4173',
             '#3182bd','#31a354','#756bb1','#636363','#e6550d']
-ad1 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_imc_breastcancer_heldout.h5ad")
+ad1 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/DeepSpatialCoupledNiche/output/deepspatial_3d_imc_coupled.h5ad")
 ad2 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/Datas/imc_human_breastcancer/imc_human_breastcancer/imc_10.h5ad")
 ad3 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_imc_breastcancer_1.h5ad")
 # print(ad2)
@@ -23,7 +23,7 @@ mask2 = (ad3.obs["z_coord"] >= mid - thick) & (ad3.obs["z_coord"] <= mid +
 cells1 = ad1[mask1]
 cells1.obs["z_coord"][:] = mid
 print(f"slice : Z=20μm ±{thick} → {cells1.n_obs} cells")
-cells1 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/dsgt_main/output/imc10_recon_dsgt.h5ad")
+# cells1 = ad.read_h5ad("/root/autodl-tmp/wangjiaxiang/DeepSpatialCoupledNiche/output/imc10.h5ad")
 cells2 = ad3[mask2]
 cells2.obs["z_coord"][:] = mid
 print(f"slice : Z=20μm ±{thick} → {cells2.n_obs} cells")

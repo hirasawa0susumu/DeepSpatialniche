@@ -13,7 +13,7 @@ DATA_DIR = "/root/autodl-tmp/wangjiaxiang/Datas/imc_human_breastcancer/held_out/
 SLICE_PAIR = (6, 7)           # which two slices to use
 N_CELLS = 3000                 # how many cells to animate
 STEPS = 100                   # ODE integration steps
-CKPT_PATH = "/root/autodl-tmp/wangjiaxiang/DeepSpatialniche/logs/deepspatial_run_imc1/deepspatial-epoch=34-loss=0.1014.ckpt"
+CKPT_PATH = "/root/autodl-tmp/wangjiaxiang/DeepSpatialCoupledNiche/logs/imc/coupled-niche-epoch=09-loss_epoch=0.8857.ckpt"
 SAVE_GIF = "trajectory.gif"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

@@ -73,10 +73,10 @@ def patch_cosine_score(P_gt, P_pred):
         if na == 0 and nb == 0:
             continue                   # GT empty → skip
         if na != 0 and nb == 0:
-            # scores.append(0.0)         # GT filled, pred empty → penalize
+            scores.append(0.0)         # GT filled, pred empty → penalize
             continue
         if na == 0 and nb != 0:
-            scores.append(0.0)
+            #scores.append(0.0)
             continue
 
         scores.append(float(np.dot(a, b) / (na * nb)))
@@ -142,27 +142,19 @@ def out_fun(adatagt, adatarecon, isgt1, isgt2):
 # 7. RUN
 # =========================
 if __name__ == "__main__":
-    adata_recon_csa = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn.h5ad")
+    adata_recon = ad.read_h5ad(
+        "/root/autodl-tmp/wangjiaxiang/DeepSpatialCoupledNiche/output/deepspatial_3d_starmap_coupled.h5ad")
 
-    adata_recon_noni1 = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn_noniche_new.h5ad"
-    )
     adata_dsgt = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_starmap_brain.h5ad")
-    adata_dsgt_new = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_starmap_brain_new.h5ad"
-    )
-    adata_recon_csa03drop = ad.read_h5ad(
-        "/root/autodl-tmp/wangjiaxiang/output/deepspatial_3d_starmap_brain_crossattn_03drop.h5ad"
-    )
+        "/root/autodl-tmp/wangjiaxiang/deepspatial_gt]/output/deepspatial_3d_starmap_brain_10e.h5ad")
+
     adata_gt = ad.read_h5ad(
         "/root/autodl-tmp/wangjiaxiang/Datas/deepstarmap_mouse_brain.h5ad"
     )
 
+
     print("Computing patch-level cosine similarity (patch_size=50x50x50 μm, raw coords)...")
 
-    out_fun(adata_gt, adata_dsgt, isgt1=True, isgt2=False)
-    out_fun(adata_gt, adata_dsgt_new, isgt1=True, isgt2=False)
-    out_fun(adata_gt, adata_recon_csa03drop, isgt1=True, isgt2=False)
-    out_fun(adata_gt, adata_recon_noni1, isgt1=True, isgt2=False)
+    out_fun(adata_recon, adata_gt, isgt1=False, isgt2=True)
+    out_fun(adata_dsgt, adata_gt, isgt1=False, isgt2=True)
+
